@@ -80,7 +80,7 @@ module cv32e40p_fp_wrapper
                   '{default: C_LAT_CONV},   // CONV
                   '{default: C_LAT_DOTP}}, // SDOTP
     UnitTypes: '{'{default: fpnew_pkg::MERGED}, // ADDMUL
-                  '{default: fpnew_pkg::DISABLED},               // DIVSQRT
+                  '{default: fpnew_pkg::MERGED},                 // DIVSQRT
                   '{default: fpnew_pkg::PARALLEL}, // NONCOMP
                   '{default: fpnew_pkg::MERGED},  // CONV
                   '{default: fpnew_pkg::DISABLED}}, // SDOTP
