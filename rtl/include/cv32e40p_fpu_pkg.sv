@@ -90,7 +90,7 @@ package cv32e40p_fpu_pkg;
   // FP OPERATIONS
   // --------------
 
-  localparam int unsigned OP_BITS = 4;
+  localparam int unsigned OP_BITS = 5;
 
   typedef enum logic [OP_BITS-1:0] {
     FMADD,
@@ -107,7 +107,10 @@ package cv32e40p_fpu_pkg;
     F2I,
     I2F,
     CPKAB,
-    CPKCD  // CONV operation group
+    CPKCD,  // CONV operation group
+    SDOTP,
+    EXVSUM,
+    VSUM  // DOTP operation group
   } operation_e;
 
 endpackage
