@@ -1853,11 +1853,14 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
               trace_id.m_mem_req_id[0] = cnt_data_req;
             end
 
+            // RVFI spec: rmask flags the bytes a LOAD reads, wmask the bytes
+            // a STORE writes (data_we_ex=0 is a load). The two assignments
+            // were historically swapped.
             if (!r_pipe_freeze_trace.data_we_ex) begin
               trace_id.m_is_load   = 1'b1;
-              trace_id.m_mem.wmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);  //'1;
-            end else begin
               trace_id.m_mem.rmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);  //'1;
+            end else begin
+              trace_id.m_mem.wmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);  //'1;
             end
 
             if (trace_id.m_got_ex_reg) begin  // Shift index 0 to 1
@@ -1918,8 +1921,14 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
               cnt_data_req = cnt_data_req + 1;
               trace_id.m_mem_req_id[0] = cnt_data_req;
             end
+            // Mirror the mask capture of the other data_req_ex site above:
+            // this path recorded the address but left both masks at 0, so
+            // these accesses were invisible to any RVFI mem-mask consumer.
             if (!r_pipe_freeze_trace.data_we_ex) begin
               trace_id.m_is_load = 1'b1;
+              trace_id.m_mem.rmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);
+            end else begin
+              trace_id.m_mem.wmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);
             end
             if (trace_id.m_got_ex_reg) begin  // Shift index 0 to 1
               trace_id.m_mem_req_id[1] = trace_id.m_mem_req_id[0];
