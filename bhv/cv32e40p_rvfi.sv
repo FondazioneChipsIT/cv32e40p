@@ -864,6 +864,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
 
     rvfi_dbg       = new_rvfi_trace.m_dbg_cause;
     rvfi_dbg_mode  = new_rvfi_trace.m_dbg_taken;
+    rvfi_intr      = new_rvfi_trace.m_intr;
 
     rvfi_trap.trap = 0;
     if (new_rvfi_trace.m_is_illegal) begin
@@ -1244,6 +1245,10 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
   endfunction
 
   bit s_was_flush;  //debug exception is flagged as trap only if preceed by a flush
+  // Armed at the trap/interrupt redirect (check_trap), consumed by the next
+  // IF fill: that instruction is the first of the handler, which per the
+  // RVFI spec carries rvfi_intr (cause + interrupt/exception kind).
+  rvfi_intr_t s_pending_intr = '0;
   //Work arround until I find the coreect way to distinguish trap
   function void check_trap();
     bit s_dbg_exception, s_exception, s_irq;
@@ -1259,10 +1264,18 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
       end
       if (r_pipe_freeze_trace.exc_pc_mux == EXC_PC_EXCEPTION) begin
         s_exception = 1'b1;
+        s_pending_intr.intr      = 1'b1;
+        s_pending_intr.exception = 1'b1;
+        s_pending_intr.interrupt = 1'b0;
+        s_pending_intr.cause     = {6'h0, r_pipe_freeze_trace.csr_cause[4:0]};
       end
       if (r_pipe_freeze_trace.exc_pc_mux == EXC_PC_IRQ) begin
         s_irq = 1'b1;
         trace_if.m_is_irq = 1'b1;
+        s_pending_intr.intr      = 1'b1;
+        s_pending_intr.exception = 1'b0;
+        s_pending_intr.interrupt = 1'b1;
+        s_pending_intr.cause     = {6'h0, r_pipe_freeze_trace.csr_cause[4:0]};
       end
     end
 
@@ -1727,7 +1740,13 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
       end
 
       // If mret, we need to keep the instruction in Id during flush_ex because mstatus update happens at that time
-      s_ex_valid_adjusted = (r_pipe_freeze_trace.ex_valid && r_pipe_freeze_trace.ex_ready) && (s_core_is_decoding || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_IF) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_ID) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_FLUSH) || ((r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_EX) && !r_pipe_freeze_trace.mret_insn_dec));
+      // DBG_TAKEN_ID with debug_cause==HALTREQ kills the ID-stage instruction:
+      // the controller drains EX/WB through DBG_FLUSH before the entry, so a
+      // handshake accepted here belongs to the killed instruction and emits a
+      // phantom retire (with a stale rd write) that never happened
+      // architecturally. Keep accepting the ebreak/trigger/step flavours,
+      // whose ID instruction is the entry cause itself.
+      s_ex_valid_adjusted = (r_pipe_freeze_trace.ex_valid && r_pipe_freeze_trace.ex_ready) && (s_core_is_decoding || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_IF) || ((r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_ID) && (r_pipe_freeze_trace.debug_cause != DBG_CAUSE_HALTREQ)) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_FLUSH) || ((r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_EX) && !r_pipe_freeze_trace.mret_insn_dec));
       //EX_STAGE
 
       if (trace_id.m_valid) begin
@@ -1990,6 +2009,11 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
         trace_if.m_dbg_cause = saved_debug_cause;
         trace_if.m_is_ebreak = '0;
         trace_if.m_trap = 1'b0;
+        // First fill after a trap/interrupt redirect = first handler
+        // instruction: consume the pending rvfi_intr mark (insn_trace_t
+        // init() copies m_intr down the pipe, so it rides to the retire).
+        trace_if.m_intr = s_pending_intr;
+        s_pending_intr  = '0;
 
         trace_if.m_valid = 1'b1;
       end
