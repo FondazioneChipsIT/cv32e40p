@@ -1365,6 +1365,9 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
   insn_trace_t apu_trace_q[$];
   insn_trace_t trace_apu_req, trace_apu_resp;
 
+  // The minstret event counted in this cycle (mhpmevent_minstret_o).
+  bit s_minstret_event;
+
   function void csr_to_apu_resp();
     `CSR_FROM_PIPE(apu_resp, fcsr)
     `CSR_FROM_PIPE(apu_resp, fflags)
@@ -1393,7 +1396,11 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
     trace_apu_req.m_csr.tinfo_wmask = '0;
 
     trace_apu_req.m_csr.minstret_we = r_pipe_freeze_trace.csr.mhpmcounter_write_lower[2];
-    trace_apu_req.m_csr.minstret_rdata = r_pipe_freeze_trace.csr.mhpmcounter_q[2];
+    // Add the event of this cycle: the row carries minstret after the instruction.
+    trace_apu_req.m_csr.minstret_rdata = r_pipe_freeze_trace.csr.mhpmcounter_q[2] +
+                                         (s_minstret_event && !r_pipe_freeze_trace.csr.mcountinhibit_q[2] &&
+                                          !r_pipe_freeze_trace.csr.mhpmcounter_write_lower[2] &&
+                                          !r_pipe_freeze_trace.csr.mhpmcounter_write_upper[2]);
     trace_apu_req.m_csr.minstret_rmask = '1;
     trace_apu_req.m_csr.minstret_wdata = r_pipe_freeze_trace.csr.mhpmcounter_q;
     trace_apu_req.m_csr.minstret_wmask = r_pipe_freeze_trace.csr.mhpmcounter_write_lower[2] ? '1 : '0;
@@ -2089,6 +2096,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
       end else begin
         s_was_flush = 1'b0;
       end
+      s_minstret_event = r_pipe_freeze_trace.minstret;
       #1;
     end
   endtask
