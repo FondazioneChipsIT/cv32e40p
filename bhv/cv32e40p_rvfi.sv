@@ -1405,6 +1405,13 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
     trace_apu_req.m_csr.minstret_wdata = r_pipe_freeze_trace.csr.mhpmcounter_q;
     trace_apu_req.m_csr.minstret_wmask = r_pipe_freeze_trace.csr.mhpmcounter_write_lower[2] ? '1 : '0;
 
+    // Sample the selectors in EX: an older csrw may have written them after ID.
+    for (int idx = 3; idx < 32; idx++) begin
+      trace_apu_req.m_csr.mhpmevent_we[idx]    = 1'b0;
+      trace_apu_req.m_csr.mhpmevent_wmask[idx] = '0;
+      sample_perf_event_to_trace(idx, trace_apu_req);
+    end
+
     trace_apu_req.m_csr.lpcount0_we = '0;
     trace_apu_req.m_csr.lpcount0_rdata = r_pipe_freeze_trace.hwloop.counter_q[0];
     trace_apu_req.m_csr.lpcount0_rmask = '1;
