@@ -770,14 +770,14 @@ package cv32e40p_pkg;
   // Transprecision floating-point extensions configuration
   parameter bit C_XF16 = 1'b1;  // Is half-precision float extension (Xf16) enabled
   parameter bit C_XF16ALT = 1'b1; // Is alternative half-precision float extension (Xf16alt) enabled
-  parameter bit C_XF8 = 1'b1;  // Is quarter-precision float extension (Xf8) enabled
+  parameter bit C_XF8 = 1'b0;  // Is quarter-precision float extension (Xf8) enabled (not in the shared FPU of the cluster)
   parameter bit C_XFVEC = 1'b1;  // Is vectorial float extension (Xfvec) enabled
   parameter bit C_XF8ALT = 1'b0;
   // Latency of FP operations: 0 = no pipe registers, 1 = 1 pipe register etc.
  parameter int unsigned C_LAT_FP64       = 'd1;
  //parameter int unsigned C_LAT_FP32       = 'd1;
- parameter int unsigned C_LAT_FP16       = 'd1;
- parameter int unsigned C_LAT_FP16ALT    = 'd1;
+ parameter int unsigned C_LAT_FP16       = 'd2; // >= 2: variable latency in the core, as the shared FPU of the cluster
+ parameter int unsigned C_LAT_FP16ALT    = 'd2; // >= 2: variable latency in the core, as the shared FPU of the cluster
  parameter int unsigned C_LAT_FP8        = 'd1;
  parameter int unsigned C_LAT_FP8_ALT    = 'd1;
  parameter int unsigned C_LAT_DIVSQRT    = 'd2; // divsqrt post-processing pipe
