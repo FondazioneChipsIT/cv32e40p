@@ -1095,12 +1095,13 @@ module cv32e40p_decoder
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010], [3'b100:3'b110]})) begin
                   illegal_insn_o = 1'b1;
                 end
+                // The operation (sgnj/sgnjn/sgnjx, min/max, le/lt/eq) is selected by the rounding-mode
+                // field in FPnew, so it must be set for both FP16ALT (bit 14 set) and the other formats
+                fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 // FP16ALT uses special encoding here
                 if (instr_rdata_i[14]) begin
                   fpu_dst_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
                   fpu_src_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
-                end else begin
-                  fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 end
               end else begin
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010]})) illegal_insn_o = 1'b1;
@@ -1115,12 +1116,13 @@ module cv32e40p_decoder
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b001], [3'b100:3'b101]})) begin
                   illegal_insn_o = 1'b1;
                 end
+                // The operation (sgnj/sgnjn/sgnjx, min/max, le/lt/eq) is selected by the rounding-mode
+                // field in FPnew, so it must be set for both FP16ALT (bit 14 set) and the other formats
+                fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 // FP16ALT uses special encoding here
                 if (instr_rdata_i[14]) begin
                   fpu_dst_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
                   fpu_src_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
-                end else begin
-                  fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 end
               end else begin
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b001]})) illegal_insn_o = 1'b1;
@@ -1192,12 +1194,13 @@ module cv32e40p_decoder
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010], [3'b100:3'b110]})) begin
                   illegal_insn_o = 1'b1;
                 end
+                // The operation (sgnj/sgnjn/sgnjx, min/max, le/lt/eq) is selected by the rounding-mode
+                // field in FPnew, so it must be set for both FP16ALT (bit 14 set) and the other formats
+                fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 // FP16ALT uses special encoding here
                 if (instr_rdata_i[14]) begin
                   fpu_dst_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
                   fpu_src_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
-                end else begin
-                  fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 end
               end else begin
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010]})) illegal_insn_o = 1'b1;
