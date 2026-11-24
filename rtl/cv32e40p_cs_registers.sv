@@ -1479,11 +1479,7 @@ module cv32e40p_cs_registers
               end else if (mhpmcounter_write_upper[cnt_gidx]) begin
                 mhpmcounter_q[cnt_gidx][63:32] <= csr_wdata_int;
               end else if (mhpmcounter_write_increment[cnt_gidx]) begin
-                mhpmcounter_q[cnt_gidx][31:0] <= mhpmcounter_increment[cnt_gidx][31:0];
-                // The upper half changes only on a carry out of the lower half
-                if (mhpmcounter_q[cnt_gidx][31:0] == '1) begin
-                  mhpmcounter_q[cnt_gidx][63:32] <= mhpmcounter_increment[cnt_gidx][63:32];
-                end
+                mhpmcounter_q[cnt_gidx] <= mhpmcounter_increment[cnt_gidx];
               end
             end
           end
