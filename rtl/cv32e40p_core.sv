@@ -204,13 +204,16 @@ module cv32e40p_core
   logic                                     fflags_we;
   logic                                     fregs_we;
 
-  // APU
+  // APU (request from ID)
   logic                                     apu_en_ex;
-  logic        [APU_NDSFLAGS_CPU-1:0]       apu_flags_ex;
-  logic        [     APU_WOP_CPU-1:0]       apu_op_ex;
   logic        [                 1:0]       apu_lat_ex;
-  logic        [   APU_NARGS_CPU-1:0][31:0] apu_operands_ex;
-  logic        [                 5:0]       apu_waddr_ex;
+  logic                                     apu_req_id;
+  logic        [APU_NDSFLAGS_CPU-1:0]       apu_flags_id;
+  logic        [     APU_WOP_CPU-1:0]       apu_op_id;
+  logic        [                 1:0]       apu_lat_id;
+  logic        [   APU_NARGS_CPU-1:0][31:0] apu_operands_id;
+  logic        [                 5:0]       apu_waddr_id;
+  logic                                     apu_disp_stall;
 
   logic        [                 2:0][ 5:0] apu_read_regs;
   logic        [                 2:0]       apu_read_regs_valid;
@@ -365,7 +368,7 @@ module cv32e40p_core
   assign irq_sec_i = 1'b0;
 
   // APU master signals
-  assign apu_flags_o = apu_flags_ex;
+  assign apu_flags_o = apu_flags_id;
 
   //////////////////////////////////////////////////////////////////////////////////////////////
   //   ____ _            _      __  __                                                   _    //
@@ -620,11 +623,15 @@ module cv32e40p_core
 
       // APU
       .apu_en_ex_o      (apu_en_ex),
-      .apu_op_ex_o      (apu_op_ex),
+      .apu_op_ex_o      (),
       .apu_lat_ex_o     (apu_lat_ex),
-      .apu_operands_ex_o(apu_operands_ex),
-      .apu_flags_ex_o   (apu_flags_ex),
-      .apu_waddr_ex_o   (apu_waddr_ex),
+      .apu_req_id_o     (apu_req_id),
+      .apu_op_id_o      (apu_op_id),
+      .apu_lat_id_o     (apu_lat_id),
+      .apu_operands_id_o(apu_operands_id),
+      .apu_flags_id_o   (apu_flags_id),
+      .apu_waddr_id_o   (apu_waddr_id),
+      .apu_disp_stall_i (apu_disp_stall),
 
       .apu_read_regs_o        (apu_read_regs),
       .apu_read_regs_valid_o  (apu_read_regs_valid),
@@ -801,10 +808,11 @@ module cv32e40p_core
 
       // APU
       .apu_en_i      (apu_en_ex),
-      .apu_op_i      (apu_op_ex),
-      .apu_lat_i     (apu_lat_ex),
-      .apu_operands_i(apu_operands_ex),
-      .apu_waddr_i   (apu_waddr_ex),
+      .apu_req_i     (apu_req_id),
+      .apu_op_i      (apu_op_id),
+      .apu_lat_i     (apu_lat_id),
+      .apu_operands_i(apu_operands_id),
+      .apu_waddr_i   (apu_waddr_id),
 
       .apu_read_regs_i        (apu_read_regs),
       .apu_read_regs_valid_i  (apu_read_regs_valid),
@@ -819,6 +827,7 @@ module cv32e40p_core
       .apu_perf_wb_o  (perf_apu_wb),
       .apu_ready_wb_o (apu_ready_wb),
       .apu_busy_o     (apu_busy_o),
+      .apu_disp_stall_o(apu_disp_stall),
 
       // CVFPU interface
       // handshake signals

@@ -70,21 +70,30 @@ module cv32e40p_fp_wrapper
     IntFmtMask:    {C_XFVEC && (C_XF8 || C_XF8ALT), C_XFVEC && (C_XF16 || C_XF16ALT), 1'b1, 1'b0}
   };
 
+  // The APU request leaves from ID: every lane has at least one register, which stands for the
+  // ID/EX operand register (latency 0 behaves as latency 1, see apu_lat_code in the decoder)
+  function automatic int unsigned regs(int unsigned lat);
+    return (lat == 0) ? 1 : lat;
+  endfunction
+
   // Implementation (number of registers etc)
   localparam fpnew_pkg::fpu_implementation_t FPU_IMPLEMENTATION = '{
     PipeRegs:  '{// FP32, FP64, FP16, FP8, FP16alt
-                  '{FPU_ADDMUL_LAT, C_LAT_FP64, C_LAT_FP16, C_LAT_FP8, C_LAT_FP16ALT, C_LAT_FP8_ALT
+                  '{regs(FPU_ADDMUL_LAT), regs(C_LAT_FP64), regs(C_LAT_FP16), regs(C_LAT_FP8),
+                    regs(C_LAT_FP16ALT), regs(C_LAT_FP8_ALT)
                   }, // ADDMUL
-                  '{default: C_LAT_DIVSQRT}, // DIVSQRT
-                  '{default: C_LAT_NONCOMP}, // NONCOMP
-                  '{default: C_LAT_CONV},   // CONV
+                  '{default: regs(C_LAT_DIVSQRT)}, // DIVSQRT
+                  '{default: regs(FPU_OTHERS_LAT)}, // NONCOMP, latency as in the decoder
+                  '{default: regs(FPU_OTHERS_LAT)}, // CONV, latency as in the decoder
                   '{default: C_LAT_DOTP}}, // SDOTP
     UnitTypes: '{'{default: fpnew_pkg::MERGED}, // ADDMUL
                   '{default: fpnew_pkg::MERGED},                 // DIVSQRT
                   '{default: fpnew_pkg::PARALLEL}, // NONCOMP
                   '{default: fpnew_pkg::MERGED},  // CONV
                   '{default: fpnew_pkg::DISABLED}}, // SDOTP
-    PipeConfig: fpnew_pkg::AFTER
+    // The APU request leaves from ID: the input registers of the FPU stand for the ID/EX operand
+    // registers, the FPU pipe for the EX stage.
+    PipeConfig: fpnew_pkg::BEFORE
   };
 
   //---------------

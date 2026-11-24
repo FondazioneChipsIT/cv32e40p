@@ -411,6 +411,13 @@ endfunction
 
 event e_pipe_monitor_ok;
 
+// APU request accepted in the previous cycle, by the instruction now in EX
+logic apu_req_ex_q;
+always_ff @(posedge clk_i, negedge rst_ni) begin
+  if (!rst_ni) apu_req_ex_q <= 1'b0;
+  else apu_req_ex_q <= apu_req_i & apu_gnt_i;
+end
+
 task monitor_pipeline();
   $display("*****Starting pipeline monitoring*****\n");
   forever begin
@@ -542,8 +549,9 @@ task monitor_pipeline();
     r_pipe_freeze_trace.data_rdata = data_rdata_i;
 
     //// APU ////
-    r_pipe_freeze_trace.apu_req = apu_req_i;
-    r_pipe_freeze_trace.apu_gnt = apu_gnt_i;
+    // The request leaves from ID: seen one cycle later, when its instruction is in EX (trace_id)
+    r_pipe_freeze_trace.apu_req = apu_req_ex_q;
+    r_pipe_freeze_trace.apu_gnt = apu_req_ex_q;
     r_pipe_freeze_trace.apu_rvalid = apu_rvalid_i;
 
     // PC //

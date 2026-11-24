@@ -161,6 +161,13 @@ module cv32e40p_decoder
   input  logic [31:0] mcounteren_i
 );
 
+  // APU latency code of an FPU lane with regs pipeline registers: 2 = one register, 3 = more.
+  // The APU request leaves from ID, so the FPU has at least one register (cv32e40p_fp_wrapper):
+  // the single-cycle code 1 is never used.
+  function automatic logic [1:0] apu_lat_code(int unsigned regs);
+    return (regs < 2) ? 2'h2 : 2'h3;
+  endfunction
+
   // write enable/request control
   logic       regfile_mem_we;
   logic       regfile_alu_we;
@@ -884,26 +891,24 @@ module cv32e40p_decoder
                 endcase
               end
 
-              // Set latencies for FPnew from config. The C_LAT constants contain the number
-              // of pipeline registers. the APU takes the following values:
-              // 1 = single cycle (no latency), 2 = one pipestage, 3 = two or more pipestages
+              // Set latencies for FPnew from config (number of pipeline registers, see apu_lat_code)
               case (fp_op_group)
                 // ADDMUL has format dependent latency
                 ADDMUL : begin
                   unique case (fpu_dst_fmt_o)
-                    cv32e40p_fpu_pkg::FP32    : apu_lat_o = (FPU_ADDMUL_LAT<2)? FPU_ADDMUL_LAT+1: 2'h3;
-                    cv32e40p_fpu_pkg::FP16    : apu_lat_o = (C_LAT_FP16<2)    ? C_LAT_FP16+1    : 2'h3;
-                    cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = (C_LAT_FP16ALT<2) ? C_LAT_FP16ALT+1 : 2'h3;
-                    cv32e40p_fpu_pkg::FP8     : apu_lat_o = (C_LAT_FP8<2)     ? C_LAT_FP8+1     : 2'h3;
+                    cv32e40p_fpu_pkg::FP32    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                    cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(C_LAT_FP16);
+                    cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(C_LAT_FP16ALT);
+                    cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(C_LAT_FP8);
                     default : ;
                   endcase
                 end
                 // DIVSQRT is iterative and takes more than 2 cycles
                 DIVSQRT : apu_lat_o = 2'h3;
                 // NONCOMP uses the same latency for all formats
-                NONCOMP : apu_lat_o = (FPU_OTHERS_LAT<2) ? FPU_OTHERS_LAT+1 : 2'h3;
+                NONCOMP : apu_lat_o = apu_lat_code(FPU_OTHERS_LAT);
                 // CONV uses the same latency for all formats
-                CONV    : apu_lat_o = (FPU_OTHERS_LAT<2) ? FPU_OTHERS_LAT+1 : 2'h3;
+                CONV    : apu_lat_o = apu_lat_code(FPU_OTHERS_LAT);
               endcase
 
               // Set FPnew OP and OPMOD as the APU op
@@ -1348,27 +1353,25 @@ module cv32e40p_decoder
             endcase
           end
 
-          // Set latencies for FPnew from config. The C_LAT constants contain the number
-          // of pipeline registers. the APU takes the following values:
-          // 1 = single cycle (no latency), 2 = one pipestage, 3 = two or more pipestages
+          // Set latencies for FPnew from config (number of pipeline registers, see apu_lat_code)
           case (fp_op_group)
             // ADDMUL has format dependent latency
             ADDMUL : begin
               unique case (fpu_dst_fmt_o)
-                cv32e40p_fpu_pkg::FP32    : apu_lat_o = (FPU_ADDMUL_LAT<2)? FPU_ADDMUL_LAT+1: 2'h3;
-                cv32e40p_fpu_pkg::FP64    : apu_lat_o = (C_LAT_FP64<2)    ? C_LAT_FP64+1    : 2'h3;
-                cv32e40p_fpu_pkg::FP16    : apu_lat_o = (C_LAT_FP16<2)    ? C_LAT_FP16+1    : 2'h3;
-                cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = (C_LAT_FP16ALT<2) ? C_LAT_FP16ALT+1 : 2'h3;
-                cv32e40p_fpu_pkg::FP8     : apu_lat_o = (C_LAT_FP8<2)     ? C_LAT_FP8+1     : 2'h3;
+                cv32e40p_fpu_pkg::FP32    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                cv32e40p_fpu_pkg::FP64    : apu_lat_o = apu_lat_code(C_LAT_FP64);
+                cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(C_LAT_FP16);
+                cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(C_LAT_FP16ALT);
+                cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(C_LAT_FP8);
                 default : ;
               endcase
             end
             // DIVSQRT is iterative and takes more than 2 cycles
             DIVSQRT : apu_lat_o = 2'h3;
             // NONCOMP uses the same latency for all formats
-            NONCOMP : apu_lat_o = (FPU_OTHERS_LAT<2) ? FPU_OTHERS_LAT+1 : 2'h3;
+            NONCOMP : apu_lat_o = apu_lat_code(FPU_OTHERS_LAT);
             // CONV uses the same latency for all formats
-            CONV    : apu_lat_o = (FPU_OTHERS_LAT<2) ? FPU_OTHERS_LAT+1 : 2'h3;
+            CONV    : apu_lat_o = apu_lat_code(FPU_OTHERS_LAT);
             default: ;
           endcase
 
@@ -1480,16 +1483,14 @@ module cv32e40p_decoder
             default : illegal_insn_o = 1'b1;
           endcase
 
-          // Set latencies for FPnew from config. The C_LAT constants contain the number
-          // of pipeline registers. the APU takes the following values:
-          // 1 = single cycle (no latency), 2 = one pipestage, 3 = two or more pipestages
+          // Set latencies for FPnew from config (number of pipeline registers, see apu_lat_code)
           // format dependent latency
           unique case (fpu_dst_fmt_o)
-            cv32e40p_fpu_pkg::FP32    : apu_lat_o = (FPU_ADDMUL_LAT<2)? FPU_ADDMUL_LAT+1: 2'h3;
-            cv32e40p_fpu_pkg::FP64    : apu_lat_o = (C_LAT_FP64<2)    ? C_LAT_FP64+1    : 2'h3;
-            cv32e40p_fpu_pkg::FP16    : apu_lat_o = (C_LAT_FP16<2)    ? C_LAT_FP16+1    : 2'h3;
-            cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = (C_LAT_FP16ALT<2) ? C_LAT_FP16ALT+1 : 2'h3;
-            cv32e40p_fpu_pkg::FP8     : apu_lat_o = (C_LAT_FP8<2)     ? C_LAT_FP8+1     : 2'h3;
+            cv32e40p_fpu_pkg::FP32    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+            cv32e40p_fpu_pkg::FP64    : apu_lat_o = apu_lat_code(C_LAT_FP64);
+            cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(C_LAT_FP16);
+            cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(C_LAT_FP16ALT);
+            cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(C_LAT_FP8);
             default : ;
           endcase
 

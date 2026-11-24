@@ -74,13 +74,14 @@ module cv32e40p_apu_disp (
 
   logic       req_accepted;
   logic       active;
+  logic       active_next;
   logic [1:0] apu_lat;
 
 
-  logic [2:0] read_deps_req, read_deps_inflight, read_deps_waiting;
-  logic [1:0] write_deps_req, write_deps_inflight, write_deps_waiting;
-  logic read_dep_req, read_dep_inflight, read_dep_waiting;
-  logic write_dep_req, write_dep_inflight, write_dep_waiting;
+  logic [2:0] read_deps_inflight, read_deps_waiting;
+  logic [1:0] write_deps_inflight, write_deps_waiting;
+  logic read_dep_inflight, read_dep_waiting;
+  logic write_dep_inflight, write_dep_waiting;
 
   logic stall_full, stall_type, stall_nack;
 
@@ -94,7 +95,10 @@ module cv32e40p_apu_disp (
   // In-flight instructions
   //
   // Check whether the instructions have returned
-  assign returned_req      = valid_req & apu_rvalid_i & !valid_inflight & !valid_waiting;
+  // The request leaves from ID and the FPU has at least one pipeline register: a result never returns in
+  // the cycle of its request. Keeping that case would close a combinational loop from the request to the
+  // write-back address, the ID hazard checks and the controller back to the request.
+  assign returned_req      = 1'b0;
   assign returned_inflight = valid_inflight & (apu_rvalid_i) & !valid_waiting;
   assign returned_waiting  = valid_waiting & (apu_rvalid_i);
 
@@ -165,7 +169,6 @@ module cv32e40p_apu_disp (
   // There is a dependency if the register is equal to one of the instructions
   generate
     for (genvar i = 0; i < 3; i++) begin : gen_read_deps
-      assign read_deps_req[i]      = (read_regs_i[i] == addr_req) & read_regs_valid_i[i];
       assign read_deps_inflight[i] = (read_regs_i[i] == addr_inflight) & read_regs_valid_i[i];
       assign read_deps_waiting[i]  = (read_regs_i[i] == addr_waiting) & read_regs_valid_i[i];
     end
@@ -173,25 +176,22 @@ module cv32e40p_apu_disp (
 
   generate
     for (genvar i = 0; i < 2; i++) begin : gen_write_deps
-      assign write_deps_req[i]      = (write_regs_i[i] == addr_req) & write_regs_valid_i[i];
       assign write_deps_inflight[i] = (write_regs_i[i] == addr_inflight) & write_regs_valid_i[i];
       assign write_deps_waiting[i]  = (write_regs_i[i] == addr_waiting) & write_regs_valid_i[i];
     end
   endgenerate
 
   // Reduce the individual dependency signals into one read and one write dependency
-  assign read_dep_req = |read_deps_req & valid_req & !returned_req;
+  // (the request is the instruction in ID itself: no dependency on it)
   assign read_dep_inflight = |read_deps_inflight & valid_inflight & !returned_inflight;
   assign read_dep_waiting = |read_deps_waiting & valid_waiting & !returned_waiting;
-  assign write_dep_req = |write_deps_req & valid_req & !returned_req;
   assign write_dep_inflight = |write_deps_inflight & valid_inflight & !returned_inflight;
   assign write_dep_waiting = |write_deps_waiting & valid_waiting & !returned_waiting;
 
-  assign read_dep_o = (read_dep_req | read_dep_inflight | read_dep_waiting) & is_decoding_i;
-  assign write_dep_o = (write_dep_req | write_dep_inflight | write_dep_waiting) & is_decoding_i;
+  assign read_dep_o = (read_dep_inflight | read_dep_waiting) & is_decoding_i;
+  assign write_dep_o = (write_dep_inflight | write_dep_waiting) & is_decoding_i;
 
-  assign read_dep_for_jalr_o = is_decoding_i & ((|read_deps_req & enable_i) |
-                                                (|read_deps_inflight & valid_inflight) |
+  assign read_dep_for_jalr_o = is_decoding_i & ((|read_deps_inflight & valid_inflight) |
                                                 (|read_deps_waiting & valid_waiting));
 
   //
@@ -202,7 +202,9 @@ module cv32e40p_apu_disp (
   // Stall if there is a type conflict. if apu is active we can only issue requests with a larger or equal latency
   // than the latency of the inflight operation (apu_lat_i>=apu_lat). otherwise operations would overtake each other!
   // so we stall if: (apu_lat_i = 1 & apu_lat = 2/3) | (apu_lat_i = 2 & apu_lat = 3) | (apu_lat_i = 3 (multicycle))
-  assign stall_type      = enable_i  & active & ((apu_lat_i==2'h1) | ((apu_lat_i==2'h2) & (apu_lat==2'h3)) | (apu_lat_i==2'h3));
+  // Nothing left in flight after this cycle if the in-flight instruction returns now: no stall
+  assign active_next     = (valid_inflight & !returned_inflight) | valid_waiting;
+  assign stall_type      = enable_i  & active_next & ((apu_lat_i==2'h1) | ((apu_lat_i==2'h2) & (apu_lat==2'h3)) | (apu_lat_i==2'h3));
   assign stall_nack = valid_req & !apu_gnt_i;
   assign stall_o = stall_full | stall_type | stall_nack;
 
@@ -228,13 +230,19 @@ module cv32e40p_apu_disp (
   assign perf_cont_o = stall_nack;
 
   assign apu_multicycle_o = (apu_lat == 2'h3);
-  assign apu_singlecycle_o = ~(valid_inflight | valid_waiting);
+  // The request leaves from ID: a result with one pipeline register returns while its instruction is
+  // in EX, so it is written on the ALU port as a single-cycle one (the LSU port would conflict with a
+  // preceding load in WB)
+  assign apu_singlecycle_o = (apu_lat != 2'h3);
 
   //
   // Assertions
   //
 
 `ifdef CV32E40P_ASSERT_ON
+  // A result never returns in the cycle of its own request (returned_req is tied to 0)
+  assert property (@(posedge clk_i) disable iff (!rst_ni) (apu_rvalid_i) |-> (valid_inflight | valid_waiting))
+    else $error("APU result returned in the cycle of its request");
   assert property (@(posedge clk_i) (apu_rvalid_i) |-> (valid_req | valid_inflight | valid_waiting))
   else $warning("[APU Dispatcher] instruction returned while no instruction is in-flight");
 `endif

@@ -136,13 +136,17 @@ module cv32e40p_id_stage
     output logic [ 1:0] mult_clpx_shift_ex_o,
     output logic        mult_clpx_img_ex_o,
 
-    // APU
+    // APU: the request leaves from ID with the forwarded operands (as in riscv_gwt)
     output logic                              apu_en_ex_o,
-    output logic [     APU_WOP_CPU-1:0]       apu_op_ex_o,
+    output logic [     APU_WOP_CPU-1:0]       apu_op_ex_o,  // for the testbench only
     output logic [                 1:0]       apu_lat_ex_o,
-    output logic [   APU_NARGS_CPU-1:0][31:0] apu_operands_ex_o,
-    output logic [APU_NDSFLAGS_CPU-1:0]       apu_flags_ex_o,
-    output logic [                 5:0]       apu_waddr_ex_o,
+    output logic                              apu_req_id_o,  // before the dispatcher stalls
+    output logic [     APU_WOP_CPU-1:0]       apu_op_id_o,
+    output logic [                 1:0]       apu_lat_id_o,
+    output logic [   APU_NARGS_CPU-1:0][31:0] apu_operands_id_o,
+    output logic [APU_NDSFLAGS_CPU-1:0]       apu_flags_id_o,
+    output logic [                 5:0]       apu_waddr_id_o,
+    input  logic                              apu_disp_stall_i,
 
     output logic [2:0][5:0] apu_read_regs_o,
     output logic [2:0]      apu_read_regs_valid_o,
@@ -922,6 +926,15 @@ module cv32e40p_id_stage
   assign csr_apu_stall  = (csr_access & ((apu_en_ex_o & (apu_lat_ex_o[1] == 1'b1) | apu_busy_i) |
                                          (data_req_ex_o & ~data_we_ex_o & regfile_waddr_ex_o[5])));
 
+  // APU request from ID: sent when the instruction leaves ID, but for the stall of the dispatcher itself
+  // (load_stall and jr_stall clear apu_en through deassert_we)
+  assign apu_req_id_o      = apu_en & ~halt_id & ~misaligned_stall & ~apu_stall & ~csr_apu_stall & ex_ready_i;
+  assign apu_op_id_o       = apu_op;
+  assign apu_lat_id_o      = apu_lat;
+  assign apu_operands_id_o = apu_operands;
+  assign apu_flags_id_o    = apu_flags;
+  assign apu_waddr_id_o    = apu_waddr;
+
   /////////////////////////////////////////////////////////
   //  ____  _____ ____ ___ ____ _____ _____ ____  ____   //
   // |  _ \| ____/ ___|_ _/ ___|_   _| ____|  _ \/ ___|  //
@@ -1461,11 +1474,6 @@ module cv32e40p_id_stage
       apu_en_ex_o            <= '0;
       apu_op_ex_o            <= '0;
       apu_lat_ex_o           <= '0;
-      apu_operands_ex_o[0]   <= '0;
-      apu_operands_ex_o[1]   <= '0;
-      apu_operands_ex_o[2]   <= '0;
-      apu_flags_ex_o         <= '0;
-      apu_waddr_ex_o         <= '0;
 
 
       regfile_waddr_ex_o     <= 6'b0;
@@ -1558,11 +1566,8 @@ module cv32e40p_id_stage
         // APU pipeline
         apu_en_ex_o <= apu_en;
         if (apu_en) begin
-          apu_op_ex_o       <= apu_op;
-          apu_lat_ex_o      <= apu_lat;
-          apu_operands_ex_o <= apu_operands;
-          apu_flags_ex_o    <= apu_flags;
-          apu_waddr_ex_o    <= apu_waddr;
+          apu_op_ex_o  <= apu_op;
+          apu_lat_ex_o <= apu_lat;
         end
 
         regfile_we_ex_o <= regfile_we_id;
@@ -1679,7 +1684,8 @@ module cv32e40p_id_stage
   end
 
   // stall control
-  assign id_ready_o = ((~misaligned_stall) & (~jr_stall) & (~load_stall) & (~apu_stall) & (~csr_apu_stall) & ex_ready_i);
+  assign id_ready_o = ((~misaligned_stall) & (~jr_stall) & (~load_stall) & (~apu_stall) & (~csr_apu_stall) &
+                       (~apu_disp_stall_i) & ex_ready_i);
   assign id_valid_o = (~halt_id) & id_ready_o;
   assign halt_if_o = halt_if;
 

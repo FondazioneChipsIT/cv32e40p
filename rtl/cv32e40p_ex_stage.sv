@@ -88,8 +88,9 @@ module cv32e40p_ex_stage
     output logic fpu_fflags_we_o,
     output logic [APU_NUSFLAGS_CPU-1:0] fpu_fflags_o,
 
-    // APU signals
+    // APU signals: apu_en_i in EX, the others of the instruction in ID (request from ID)
     input logic                              apu_en_i,
+    input logic                              apu_req_i,
     input logic [     APU_WOP_CPU-1:0]       apu_op_i,
     input logic [                 1:0]       apu_lat_i,
     input logic [   APU_NARGS_CPU-1:0][31:0] apu_operands_i,
@@ -110,6 +111,7 @@ module cv32e40p_ex_stage
 
     output logic apu_busy_o,
     output logic apu_ready_wb_o,
+    output logic apu_disp_stall_o,  // to ID
 
     // apu-interconnect
     // handshake signals
@@ -185,6 +187,8 @@ module cv32e40p_ex_stage
   logic                        apu_stall;
   logic                        apu_active;
   logic                        apu_singlecycle;
+  logic                        apu_wb_busy;
+  logic                        apu_hold;
   logic                        apu_multicycle;
   logic                        apu_req;
   logic                        apu_gnt;
@@ -341,7 +345,7 @@ module cv32e40p_ex_stage
           .clk_i (clk),
           .rst_ni(rst_n),
 
-          .enable_i   (apu_en_i),
+          .enable_i   (apu_req_i),
           .apu_lat_i  (apu_lat_i),
           .apu_waddr_i(apu_waddr_i),
 
@@ -373,31 +377,31 @@ module cv32e40p_ex_stage
       );
 
       assign apu_perf_wb_o  = wb_contention | wb_contention_lsu;
+      assign apu_disp_stall_o = apu_stall;
       assign apu_ready_wb_o = ~(apu_active | apu_en_i | apu_stall) | apu_valid;
 
       ///////////////////////////////////////
       // APU result memorization Register  //
       ///////////////////////////////////////
+      // ALU port busy for a multicycle result
+      assign apu_wb_busy = data_misaligned_i || data_misaligned_ex_i ||
+                           ((data_req_i || data_rvalid_i) && regfile_alu_we_i) ||
+                           (mulh_active && (mult_operator_i == MUL_H)) ||
+                           ((ctrl_transfer_insn_in_dec_i == BRANCH_JALR) &&
+                            regfile_alu_we_i && ~apu_read_dep_for_jalr_o);
+      assign apu_hold = apu_multicycle && apu_wb_busy;
+
       always_ff @(posedge clk, negedge rst_n) begin : APU_Result_Memorization
         if (~rst_n) begin
           apu_rvalid_q <= 1'b0;
           apu_result_q <= 'b0;
           apu_flags_q  <= 'b0;
         end else begin
-          if (apu_rvalid_i && apu_multicycle &&
-              (data_misaligned_i || data_misaligned_ex_i ||
-               ((data_req_i || data_rvalid_i) && regfile_alu_we_i) ||
-               (mulh_active && (mult_operator_i == MUL_H)) ||
-               ((ctrl_transfer_insn_in_dec_i == BRANCH_JALR) &&
-                regfile_alu_we_i && ~apu_read_dep_for_jalr_o))) begin
+          if (apu_rvalid_i && apu_hold) begin
             apu_rvalid_q <= 1'b1;
             apu_result_q <= apu_result_i;
             apu_flags_q  <= apu_flags_i;
-          end else if (apu_rvalid_q && !(data_misaligned_i || data_misaligned_ex_i ||
-                                         ((data_req_i || data_rvalid_i) && regfile_alu_we_i) ||
-                                         (mulh_active && (mult_operator_i == MUL_H)) ||
-                                         ((ctrl_transfer_insn_in_dec_i == BRANCH_JALR) &&
-                                          regfile_alu_we_i && ~apu_read_dep_for_jalr_o))) begin
+          end else if (apu_rvalid_q && !apu_hold) begin
             apu_rvalid_q <= 1'b0;
           end
         end
@@ -405,12 +409,7 @@ module cv32e40p_ex_stage
 
       assign apu_req_o = apu_req;
       assign apu_gnt = apu_gnt_i;
-      assign apu_valid = (apu_multicycle && (data_misaligned_i || data_misaligned_ex_i ||
-                                             ((data_req_i || data_rvalid_i) && regfile_alu_we_i) ||
-                                             (mulh_active && (mult_operator_i == MUL_H)) ||
-                                             ((ctrl_transfer_insn_in_dec_i == BRANCH_JALR) &&
-                                              regfile_alu_we_i && ~apu_read_dep_for_jalr_o)))
-                         ? 1'b0 : (apu_rvalid_i || apu_rvalid_q);
+      assign apu_valid = apu_hold ? 1'b0 : (apu_rvalid_i || apu_rvalid_q);
       assign apu_operands_o = apu_operands_i;
       assign apu_op_o = apu_op_i;
       assign apu_result = apu_rvalid_q ? apu_result_q : apu_result_i;
@@ -431,6 +430,9 @@ module cv32e40p_ex_stage
       assign apu_stall               = 1'b0;
       assign apu_active              = 1'b0;
       assign apu_ready_wb_o          = 1'b1;
+      assign apu_disp_stall_o        = 1'b0;
+      assign apu_wb_busy             = 1'b0;
+      assign apu_hold                = 1'b0;
       assign apu_perf_wb_o           = 1'b0;
       assign apu_perf_cont_o         = 1'b0;
       assign apu_perf_type_o         = 1'b0;
@@ -471,7 +473,7 @@ module cv32e40p_ex_stage
   // As valid always goes to the right and ready to the left, and we are able
   // to finish branches without going to the WB stage, ex_valid does not
   // depend on ex_ready.
-  assign ex_ready_o = (~apu_stall & alu_ready & mult_ready & lsu_ready_ex_i
+  assign ex_ready_o = (alu_ready & mult_ready & lsu_ready_ex_i
                        & wb_ready_i & ~wb_contention) | (branch_in_ex_i);
   assign ex_valid_o = (apu_valid | alu_en_i | mult_en_i | csr_access_i | lsu_en_i)
                        & (alu_ready & mult_ready & lsu_ready_ex_i & wb_ready_i);
