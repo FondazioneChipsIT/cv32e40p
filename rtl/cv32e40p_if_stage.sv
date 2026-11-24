@@ -91,6 +91,15 @@ module cv32e40p_if_stage #(
     input logic        hwlp_jump_i,
     input logic [31:0] hwlp_target_i,
 
+    // Branch target buffer
+    input  logic        pred_en_i,  // the controller allows a redirect from IF
+    input  logic        bht_taken_if_i,  // the branch history predicts the instruction at pc_if taken
+    input  logic        btb_we_i,  // write the entry of the instruction in ID
+    input  logic        btb_wvalid_i,
+    input  logic [11:0] btb_wimm_i,  // branch offset [12:1] of the instruction in ID
+    output logic        pred_taken_id_o,  // the fetch after the instruction in ID went to a BTB target
+    output logic [11:0] pred_imm_id_o,  // branch offset [12:1] the BTB gave to the instruction in ID
+
     // pipeline stall
     input logic halt_if_i,
     input logic id_ready_i,
@@ -126,6 +135,25 @@ module cv32e40p_if_stage #(
   logic [31:0] instr_aligned;
   logic [31:0] instr_decompressed;
   logic        instr_compressed_int;
+
+  // Branch target buffer: offset of a taken branch, indexed by pc[BTB_ADDR_WIDTH:1]
+  localparam int BTB_ADDR_WIDTH = 4;
+  localparam int BTB_TAG_WIDTH = 4;
+
+  logic                      btb_valid_q       [2**BTB_ADDR_WIDTH];
+  logic [ BTB_TAG_WIDTH-1:0] btb_tag_q         [2**BTB_ADDR_WIDTH];
+  logic [              11:0] btb_imm_q         [2**BTB_ADDR_WIDTH];
+  logic [BTB_ADDR_WIDTH-1:0] btb_raddr;
+  logic [BTB_ADDR_WIDTH-1:0] btb_waddr;
+  logic                      btb_we;
+  logic                      btb_hit;
+  logic [              11:0] btb_imm;
+  logic                      clk_btb;
+  logic [              31:0] pred_target;
+  logic                      pred_jump;  // fetch the BTB target after the instruction at pc_if
+  logic                      pred_pending_q;  // pred_jump done, its instruction not yet in ID
+  logic                      pred_ok_fetch;
+  logic                      pred_ok_align;
 
 
   // exception PC selection mux
@@ -165,7 +193,8 @@ module cv32e40p_if_stage #(
       PC_MRET: branch_addr_n = mepc_i;  // PC is restored when returning from IRQ/exception
       PC_URET: branch_addr_n = uepc_i;  // PC is restored when returning from IRQ/exception
       PC_DRET: branch_addr_n = depc_i;  //
-      PC_FENCEI: branch_addr_n = pc_id_o + 4;  // jump to next instr forces prefetch buffer reload
+      // jump to next instr forces prefetch buffer reload (also after a wrong BTB redirect)
+      PC_FENCEI: branch_addr_n = pc_id_o + (is_compressed_id_o ? 32'd2 : 32'd4);
       PC_HWLOOP: branch_addr_n = hwlp_target_i;
       default: ;
     endcase
@@ -192,6 +221,10 @@ module cv32e40p_if_stage #(
 
       .hwlp_jump_i  (hwlp_jump_i),
       .hwlp_target_i(hwlp_target_i),
+
+      .pred_jump_i  (pred_jump),
+      .pred_target_i(pred_target),
+      .pred_ok_o    (pred_ok_fetch),
 
       .fetch_ready_i(fetch_ready),
       .fetch_valid_o(fetch_valid),
@@ -227,6 +260,65 @@ module cv32e40p_if_stage #(
 
   assign if_busy_o    = prefetch_busy;
   assign perf_imiss_o = !fetch_valid && !branch_req;
+
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Branch target buffer: a branch predicted taken whose offset is in the BTB
+  // fetches its target right after its own word, before it reaches ID. ID checks
+  // the instruction and the offset, and redirects the fetch when they differ.
+  //////////////////////////////////////////////////////////////////////////////
+
+  assign btb_raddr = pc_if_o[BTB_ADDR_WIDTH:1];
+  assign btb_hit = btb_valid_q[btb_raddr] &&
+      (btb_tag_q[btb_raddr] == pc_if_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH]);
+  assign btb_imm = btb_imm_q[btb_raddr];
+  assign pred_target = pc_if_o + {{19{btb_imm[11]}}, btb_imm, 1'b0};
+
+  // A pc_set in the same cycle wins in the prefetcher and in the aligner
+  assign pred_jump = btb_hit && bht_taken_if_i && pred_en_i && pred_ok_align && pred_ok_fetch;
+
+  // The entry read by a pending redirect does not change until its instruction is in ID
+  assign btb_waddr = pc_id_o[BTB_ADDR_WIDTH:1];
+  assign btb_we    = btb_we_i && !pred_pending_q;
+
+  cv32e40p_clock_gate btb_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (btb_we),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_btb)
+  );
+
+  always_ff @(posedge clk_btb, negedge rst_n) begin : btb_update
+    if (rst_n == 1'b0) begin
+      btb_valid_q <= '{default: 1'b0};
+      btb_tag_q   <= '{default: '0};
+      btb_imm_q   <= '{default: '0};
+    end else begin
+      btb_valid_q[btb_waddr] <= btb_wvalid_i;
+      btb_tag_q[btb_waddr]   <= pc_id_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH];
+      btb_imm_q[btb_waddr]   <= btb_wimm_i;
+    end
+  end
+
+  always_ff @(posedge clk, negedge rst_n) begin : pred_pipe
+    if (rst_n == 1'b0) begin
+      pred_pending_q  <= 1'b0;
+      pred_taken_id_o <= 1'b0;
+      pred_imm_id_o   <= '0;
+    end else begin
+      if (branch_req || (if_valid && instr_valid)) begin
+        pred_pending_q <= 1'b0;
+      end else if (pred_jump) begin
+        pred_pending_q <= 1'b1;
+      end
+      if (if_valid && instr_valid) begin
+        pred_taken_id_o <= pred_jump || pred_pending_q;
+        if (pred_jump || pred_pending_q) begin
+          pred_imm_id_o <= btb_imm;
+        end
+      end
+    end
+  end
 
   // IF-ID pipeline registers, frozen when the ID stage is stalled
   always_ff @(posedge clk, negedge rst_n) begin : IF_ID_PIPE_REGISTERS
@@ -268,8 +360,9 @@ module cv32e40p_if_stage #(
       .instr_valid_o   (instr_valid),
       .branch_addr_i   ({branch_addr_n[31:1], 1'b0}),
       .branch_i        (branch_req),
-      .hwlp_addr_i     (hwlp_target_i),
-      .hwlp_update_pc_i(hwlp_jump_i),
+      .hwlp_addr_i     (pred_jump ? pred_target : hwlp_target_i),
+      .hwlp_update_pc_i(hwlp_jump_i || pred_jump),
+      .pred_ok_o       (pred_ok_align),
       .pc_o            (pc_if_o)
   );
 

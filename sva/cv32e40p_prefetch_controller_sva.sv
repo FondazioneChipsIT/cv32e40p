@@ -46,6 +46,7 @@ module cv32e40p_prefetch_controller_sva
   // HW loop signals
   input  logic                     hwlp_jump_i,
   input  logic [31:0]              hwlp_target_i,
+  input  logic                     pred_jump_i,
 
   // Transaction request interface
   input  logic        trans_valid_o,            // Transaction request valid (to bus interface adapter)
@@ -117,9 +118,7 @@ module cv32e40p_prefetch_controller_sva
   end else begin : gen_no_pulp_xpulp_assertions
 
     property p_hwlp_not_used;
-       @(posedge clk) disable iff (!rst_n) (1'b1) |-> ((hwlp_jump_i == 1'b0) && (hwlp_target_i == 32'b0) && (hwlp_wait_resp_flush == 1'b0) &&
-                                  (hwlp_flush_after_resp == 1'b0) && (hwlp_flush_resp_delayed == 1'b0) && (hwlp_flush_cnt_delayed_q == 0) &&
-                                  (hwlp_flush_resp == 1'b0));
+       @(posedge clk) disable iff (!rst_n) (1'b1) |-> ((hwlp_jump_i == 1'b0) && (hwlp_target_i == 32'b0));
     endproperty
 
     a_hwlp_not_used:
@@ -130,6 +129,17 @@ module cv32e40p_prefetch_controller_sva
 
   end
   endgenerate
+
+  // A predicted taken branch jumps after a word already requested, never with a hardware loop
+  property p_pred_jump_after_requested_word;
+     @(posedge clk) disable iff (!rst_n) (pred_jump_i) |-> ((cnt_q > 0 || !fifo_empty_i) && !hwlp_jump_i);
+  endproperty
+
+  a_pred_jump_after_requested_word:
+    assert property(p_pred_jump_after_requested_word)
+    else
+      `uvm_error("Prefetch Controller SVA",
+                 $sformatf("Predicted jump before its word is requested, or with a hardware loop jump"))
 
 
  // Check that a taken branch can only occur if fetching is requested

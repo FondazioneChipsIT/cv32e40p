@@ -328,6 +328,15 @@ module cv32e40p_core
   logic [             31:0]       hwlp_target;
   logic                           hwlp_jump;
 
+  // Branch target buffer
+  logic                           pred_en;
+  logic                           bht_taken_if;
+  logic                           btb_we;
+  logic                           btb_wvalid;
+  logic [                   11:0] btb_wimm;
+  logic                           pred_taken_id;
+  logic [                   11:0] pred_imm_id;
+
   // Performance Counters
   logic                           mhpmevent_minstret;
   logic                           mhpmevent_load;
@@ -491,6 +500,15 @@ module cv32e40p_core
       .hwlp_jump_i  (hwlp_jump),
       .hwlp_target_i(hwlp_target),
 
+      // Branch target buffer
+      .pred_en_i      (pred_en),
+      .bht_taken_if_i (bht_taken_if),
+      .btb_we_i       (btb_we),
+      .btb_wvalid_i   (btb_wvalid),
+      .btb_wimm_i     (btb_wimm),
+      .pred_taken_id_o(pred_taken_id),
+      .pred_imm_id_o  (pred_imm_id),
+
 
       // Jump targets
       .jump_target_id_i(jump_target_id),
@@ -552,6 +570,16 @@ module cv32e40p_core
       .branch_decision_i          (branch_decision),
       .jump_target_o              (jump_target_id),
       .ctrl_transfer_insn_in_dec_o(ctrl_transfer_insn_in_dec),
+
+      // Branch target buffer
+      .pc_if_i       (pc_if),
+      .bht_taken_if_o(bht_taken_if),
+      .pred_taken_i  (pred_taken_id),
+      .pred_imm_i    (pred_imm_id),
+      .pred_en_o     (pred_en),
+      .btb_we_o      (btb_we),
+      .btb_wvalid_o  (btb_wvalid),
+      .btb_wimm_o    (btb_wimm),
 
       // IF and ID control signals
       .clear_instr_valid_o(clear_instr_valid),

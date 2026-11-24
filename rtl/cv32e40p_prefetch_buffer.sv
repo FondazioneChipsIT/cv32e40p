@@ -39,6 +39,10 @@ module cv32e40p_prefetch_buffer #(
     input logic        hwlp_jump_i,
     input logic [31:0] hwlp_target_i,
 
+    input  logic        pred_jump_i,
+    input  logic [31:0] pred_target_i,
+    output logic        pred_ok_o,
+
     input  logic        fetch_ready_i,
     output logic        fetch_valid_o,
     output logic [31:0] fetch_rdata_o,
@@ -99,6 +103,10 @@ module cv32e40p_prefetch_buffer #(
 
       .hwlp_jump_i  (hwlp_jump_i),
       .hwlp_target_i(hwlp_target_i),
+
+      .pred_jump_i  (pred_jump_i),
+      .pred_target_i(pred_target_i),
+      .pred_ok_o    (pred_ok_o),
 
       .trans_valid_o(trans_valid),
       .trans_ready_i(trans_ready),

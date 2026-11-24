@@ -72,6 +72,16 @@ module cv32e40p_id_stage
     output logic [31:0] jump_target_o,
     output logic [ 1:0] ctrl_transfer_insn_in_dec_o,
 
+    // Branch target buffer
+    input  logic [31:0] pc_if_i,
+    output logic        bht_taken_if_o,  // the branch history predicts the instruction at pc_if taken
+    input  logic        pred_taken_i,  // IF fetched a BTB target after the instruction in ID
+    input  logic [11:0] pred_imm_i,  // branch offset [12:1] of that BTB target
+    output logic        pred_en_o,
+    output logic        btb_we_o,
+    output logic        btb_wvalid_o,
+    output logic [11:0] btb_wimm_o,
+
     // IF and ID stage signals
     output logic       clear_instr_valid_o,
     output logic       pc_set_o,
@@ -307,6 +317,8 @@ module cv32e40p_id_stage
   logic                      branch_pred_ctrl;  // the branch in ID fetches its target
   logic                      branch_pred_ex;  // the branch in EX fetched its target
   logic [              31:0] pc_next_id;
+  logic                      branch_btb_ok;  // IF fetches the target of the branch in ID
+  logic                      branch_btb_bad;  // IF fetched a wrong BTB target
 
   logic        misaligned_stall;
   logic        jr_stall;
@@ -627,7 +639,20 @@ module cv32e40p_id_stage
 
   assign bht_raddr      = pc_id_i[BHT_ADDR_WIDTH:1];
   assign bht_waddr      = pc_ex_o[BHT_ADDR_WIDTH:1];
-  assign branch_pred_id = bht_q[bht_raddr][1];
+  // A BTB redirect in IF was a taken prediction: ID keeps it
+  assign branch_pred_id = bht_q[bht_raddr][1] || pred_taken_i;
+  assign bht_taken_if_o = bht_q[pc_if_i[BHT_ADDR_WIDTH:1]][1];
+
+  // The BTB redirect is right if the instruction is a branch with the same offset
+  assign branch_btb_ok  = pred_taken_i && (ctrl_transfer_insn_in_dec_o == BRANCH_COND) &&
+                          (imm_sb_type[12:1] == pred_imm_i);
+  assign branch_btb_bad = pred_taken_i && !branch_btb_ok;
+
+  // A branch predicted taken without a BTB redirect writes its offset; a wrong redirect
+  // that is not such a branch clears its entry
+  assign btb_we_o       = instr_valid_i && ((branch_pred_ctrl && !branch_btb_ok) || branch_btb_bad);
+  assign btb_wvalid_o   = branch_pred_ctrl;
+  assign btb_wimm_o     = imm_sb_type[12:1];
 
   // The counters are clocked only when a branch resolves in EX
   cv32e40p_clock_gate bht_clock_gate_i (
@@ -1343,6 +1368,9 @@ module cv32e40p_id_stage
       .branch_taken_ex_i          (branch_taken_ex),
       .branch_pred_i              (branch_pred_id),
       .branch_pred_id_o           (branch_pred_ctrl),
+      .branch_btb_ok_i            (branch_btb_ok),
+      .branch_btb_bad_i           (branch_btb_bad),
+      .pred_en_o                  (pred_en_o),
       .ctrl_transfer_insn_in_id_i (ctrl_transfer_insn_in_id),
       .ctrl_transfer_insn_in_dec_i(ctrl_transfer_insn_in_dec_o),
 

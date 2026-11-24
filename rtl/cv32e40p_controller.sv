@@ -114,6 +114,9 @@ module cv32e40p_controller import cv32e40p_pkg::*;
   input  logic        branch_taken_ex_i,          // branch in EX redirects the fetch (mispredicted)
   input  logic        branch_pred_i,              // the branch history predicts the branch in ID taken
   output logic        branch_pred_id_o,           // the branch in ID fetches its target (predicted taken)
+  input  logic        branch_btb_ok_i,            // IF already fetches the target of the branch in ID
+  input  logic        branch_btb_bad_i,           // IF fetched a wrong BTB target after the instruction in ID
+  output logic        pred_en_o,                  // IF may fetch a BTB target
   input  logic [1:0]  ctrl_transfer_insn_in_id_i,               // jump is being calculated in ALU
   input  logic [1:0]  ctrl_transfer_insn_in_dec_i,              // jump is being calculated in ALU
 
@@ -564,7 +567,7 @@ module cv32e40p_controller import cv32e40p_pkg::*;
                     // the fetch to the next instruction if the branch is not taken
                       pc_mux_o = PC_JUMP;
                       if (~jump_done_q) begin
-                        pc_set_o    = 1'b1;
+                        pc_set_o    = ~branch_btb_ok_i;
                         jump_done   = 1'b1;
                       end
                     end
@@ -675,6 +678,15 @@ module cv32e40p_controller import cv32e40p_pkg::*;
                     end
 
                   endcase // unique case (1'b1)
+
+                  // IF fetched a BTB target after an instruction that is not that branch:
+                  // fetch again from the next instruction (jumps and branches redirect above)
+                  if (branch_btb_bad_i && ~jump_in_dec && ~branch_pred_dec && ~jump_done_q &&
+                      ~pc_set_o) begin
+                    pc_mux_o  = PC_FENCEI;
+                    pc_set_o  = 1'b1;
+                    jump_done = 1'b1;
+                  end
                 end
 
                 if (debug_single_step_i & ~debug_mode_q) begin
@@ -1403,6 +1415,10 @@ endgenerate
   assign misaligned_stall_o = data_misaligned_i;
 
   assign branch_pred_id_o = branch_pred_dec;
+
+  // Only DECODE checks a BTB redirect; hardware loops need a sequential fetch
+  assign pred_en_o = (ctrl_fsm_cs == DECODE) && (hwlp_counter_i[0] == '0) &&
+                     (hwlp_counter_i[1] == '0);
 
   // APU dependency stalls (data hazards)
   assign apu_stall_o = apu_read_dep_i | (apu_write_dep_i & ~apu_en_i);

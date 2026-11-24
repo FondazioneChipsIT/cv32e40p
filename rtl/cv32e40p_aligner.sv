@@ -39,6 +39,7 @@ module cv32e40p_aligner (
 
     input logic [31:0] hwlp_addr_i,
     input logic        hwlp_update_pc_i,
+    output logic       pred_ok_o,  // the instruction at pc_o ends in the next fetched word
 
     output logic [31:0] pc_o
 );
@@ -58,8 +59,15 @@ module cv32e40p_aligner (
   logic update_state;
   logic [31:0] pc_plus4, pc_plus2;
   logic aligner_ready_q, hwlp_update_pc_q;
+  logic [31:0] hwlp_addr;
 
   assign pc_o     = pc_q;
+
+  assign hwlp_addr = hwlp_update_pc_i ? hwlp_addr_i : hwlp_addr_q;
+
+  // States where the next instruction ends in the next fetched word, with no pending target
+  assign pred_ok_o = ((state == ALIGNED32) || (state == MISALIGNED16) ||
+                      ((state == MISALIGNED32) && (r_instr_h[1:0] == 2'b11))) && !hwlp_update_pc_q;
 
   assign pc_plus2 = pc_q + 2;
   assign pc_plus4 = pc_q + 4;
@@ -128,8 +136,6 @@ module cv32e40p_aligner (
           instr_aligned_o = fetch_rdata_i;
           //gate id_valid with fetch_valid as the next state should be evaluated only if mem content is valid
           update_state    = fetch_valid_i & if_valid_i;
-          if (hwlp_update_pc_i || hwlp_update_pc_q)
-            pc_n = hwlp_update_pc_i ? hwlp_addr_i : hwlp_addr_q;
         end else begin
           /*
                   Before we fetched a 32bit aligned instruction
@@ -232,6 +238,14 @@ module cv32e40p_aligner (
 
     endcase  // state
 
+
+    // A hardware loop end or a predicted taken branch resumes at its target after the
+    // instruction at pc_q, if that instruction ends in the fetched word
+    if ((hwlp_update_pc_i || hwlp_update_pc_q) && update_state && (state != BRANCH_MISALIGNED) &&
+        !((state == MISALIGNED32) && (r_instr_h[1:0] != 2'b11))) begin
+      pc_n       = hwlp_addr;
+      next_state = hwlp_addr[1] ? BRANCH_MISALIGNED : ALIGNED32;
+    end
 
     // JUMP, BRANCH, SPECIAL JUMP control
     if (branch_i) begin

@@ -56,6 +56,11 @@ module cv32e40p_prefetch_controller #(
     input logic        hwlp_jump_i,
     input logic [31:0] hwlp_target_i,
 
+    // Predicted taken branch: fetch pred_target_i after the instruction that ends in the head word
+    input  logic        pred_jump_i,
+    input  logic [31:0] pred_target_i,
+    output logic        pred_ok_o,  // the head word is requested and no other redirect is pending
+
     // Transaction request interface
     output logic trans_valid_o,  // Transaction request valid (to bus interface adapter)
     input  logic                     trans_ready_i,           // Transaction request ready (transaction gets accepted when trans_valid_o and trans_ready_i are both 1)
@@ -106,6 +111,10 @@ module cv32e40p_prefetch_controller #(
   logic hwlp_flush_resp_delayed;  // Actual delayed flush
   logic hwlp_flush_resp;  // Response flush counter when hwlp occurs
 
+  // Jump after the head word (hardware loop end or predicted taken branch)
+  logic        jump_next;
+  logic [31:0] jump_next_addr;
+
   //////////////////////////////////////////////////////////////////////////////
   // Prefetch buffer status
   //////////////////////////////////////////////////////////////////////////////
@@ -130,6 +139,14 @@ module cv32e40p_prefetch_controller #(
   // - Only request transaction when fetch stage requires fetch (req_i), and
   // - make sure that FIFO (cv32e40p_fetch_fifo) never overflows (fifo_cnt_i + cnt_q < DEPTH)
   //////////////////////////////////////////////////////////////////////////////
+
+  // The controller and the IF stage never request both jumps in the same cycle
+  assign jump_next      = hwlp_jump_i || pred_jump_i;
+  assign jump_next_addr = pred_jump_i ? {pred_target_i[31:2], 2'b00} : hwlp_target_i;
+
+  // A jump after the head word needs that word requested and no flush or redirect in progress
+  assign pred_ok_o = (state_q == IDLE) && (flush_cnt_q == '0) && !hwlp_flush_after_resp &&
+                     (!fifo_empty_i || (cnt_q != '0));
 
   // Prefetcher will only perform word fetches
   assign aligned_branch_addr = {branch_addr_i[31:2], 2'b00};
@@ -158,7 +175,7 @@ module cv32e40p_prefetch_controller #(
   // there is surely space for a new request.
   // Masking fifo_cnt in this case allows for making a new request when the FIFO
   // is not empty and we are jumping, and (fifo_cnt_i + cnt_q == DEPTH)
-  assign fifo_cnt_masked = (branch_i || hwlp_jump_i) ? '0 : fifo_cnt_i;
+  assign fifo_cnt_masked = (branch_i || jump_next) ? '0 : fifo_cnt_i;
 
   // FSM (state_q, next_state) to control OBI A channel signals.
   always_comb begin
@@ -173,13 +190,13 @@ module cv32e40p_prefetch_controller #(
             // Jumps must have the highest priority (e.g. an interrupt must
             // have higher priority than a HW-loop branch)
             trans_addr_o = aligned_branch_addr;
-          end else if (hwlp_jump_i) begin
-            trans_addr_o = hwlp_target_i;
+          end else if (jump_next) begin
+            trans_addr_o = jump_next_addr;
           end else begin
             trans_addr_o = trans_addr_incr;
           end
         end
-        if ((branch_i || hwlp_jump_i) && !(trans_valid_o && trans_ready_i)) begin
+        if ((branch_i || jump_next) && !(trans_valid_o && trans_ready_i)) begin
           // Taken branch, but transaction not yet accepted by bus interface adapter.
           next_state = BRANCH_WAIT;
         end
@@ -242,78 +259,62 @@ module cv32e40p_prefetch_controller #(
     endcase
   end
 
-  generate
-    if (COREV_PULP) begin : gen_hwlp
 
-      // Flush the FIFO if it is not empty and we are hwlp branching.
-      // If HWLP_END is not going to ID, save it from the flush.
-      // Don't flush the FIFO if it is empty (maybe we must accept
-      // HWLP_end from the memory in this cycle)
-      assign fifo_flush_o           = branch_i || (hwlp_jump_i && !fifo_empty_i && fifo_pop_o);
-      assign fifo_flush_but_first_o = (hwlp_jump_i && !fifo_empty_i && !fifo_pop_o);
+  // Also used by the predicted taken branches, in every configuration.
+  // Flush the FIFO if it is not empty and we are hwlp branching.
+  // If HWLP_END is not going to ID, save it from the flush.
+  // Don't flush the FIFO if it is empty (maybe we must accept
+  // HWLP_end from the memory in this cycle)
+  assign fifo_flush_o           = branch_i || (jump_next && !fifo_empty_i && fifo_pop_o);
+  assign fifo_flush_but_first_o = (jump_next && !fifo_empty_i && !fifo_pop_o && !branch_i);
 
-      //////////////////////////////////////////////////////////////////////////////
-      // HWLP main resp flush controller
-      //////////////////////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////////////////////////////
+  // HWLP main resp flush controller
+  //////////////////////////////////////////////////////////////////////////////
 
-      // If HWLP_END-4 is in ID and HWLP_END is being/was returned by the memory
-      // we can flush all the eventual outstanding requests up to now
-      assign hwlp_flush_resp        = hwlp_jump_i && !(fifo_empty_i && !resp_valid_i);
+  // If HWLP_END-4 is in ID and HWLP_END is being/was returned by the memory
+  // we can flush all the eventual outstanding requests up to now
+  assign hwlp_flush_resp        = jump_next && !(fifo_empty_i && !resp_valid_i);
 
-      //////////////////////////////////////////////////////////////////////////////
-      // HWLP delayed flush controller
-      //////////////////////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////////////////////////////
+  // HWLP delayed flush controller
+  //////////////////////////////////////////////////////////////////////////////
 
-      // If HWLP_END-4 is in ID and HWLP_END has not been returned yet,
-      // save the present number of outstanding requests (subtract the HWLP_END one).
-      // Wait for HWLP_END then flush the saved number of (wrong) outstanding requests
-      assign hwlp_wait_resp_flush   = hwlp_jump_i && (fifo_empty_i && !resp_valid_i);
+  // If HWLP_END-4 is in ID and HWLP_END has not been returned yet,
+  // save the present number of outstanding requests (subtract the HWLP_END one).
+  // Wait for HWLP_END then flush the saved number of (wrong) outstanding requests
+  assign hwlp_wait_resp_flush   = jump_next && (fifo_empty_i && !resp_valid_i);
 
-      always_ff @(posedge clk or negedge rst_n) begin
-        if (~rst_n) begin
-          hwlp_flush_after_resp    <= 1'b0;
-          hwlp_flush_cnt_delayed_q <= 2'b00;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (~rst_n) begin
+      hwlp_flush_after_resp    <= 1'b0;
+      hwlp_flush_cnt_delayed_q <= 2'b00;
+    end else begin
+      if (branch_i) begin
+        // Reset the flush request if an interrupt is taken
+        hwlp_flush_after_resp    <= 1'b0;
+        hwlp_flush_cnt_delayed_q <= 2'b00;
+      end else begin
+        if (hwlp_wait_resp_flush) begin
+          hwlp_flush_after_resp    <= 1'b1;
+          // cnt_q > 0 checked by an assertion
+          hwlp_flush_cnt_delayed_q <= cnt_q - 1'b1;
         end else begin
-          if (branch_i) begin
-            // Reset the flush request if an interrupt is taken
+          // Reset the delayed flush request when it's completed
+          if (hwlp_flush_resp_delayed) begin
             hwlp_flush_after_resp    <= 1'b0;
             hwlp_flush_cnt_delayed_q <= 2'b00;
-          end else begin
-            if (hwlp_wait_resp_flush) begin
-              hwlp_flush_after_resp    <= 1'b1;
-              // cnt_q > 0 checked by an assertion
-              hwlp_flush_cnt_delayed_q <= cnt_q - 1'b1;
-            end else begin
-              // Reset the delayed flush request when it's completed
-              if (hwlp_flush_resp_delayed) begin
-                hwlp_flush_after_resp    <= 1'b0;
-                hwlp_flush_cnt_delayed_q <= 2'b00;
-              end
-            end
           end
         end
       end
-
-      // This signal is masked by branch_i in the flush counter process,
-      // because if an interrupt occurs during a delayed flush, the interrupt
-      // is served first so the flush should be normal (caused by branch_i)
-      assign hwlp_flush_resp_delayed = hwlp_flush_after_resp && resp_valid_i;
-
-    end else begin : gen_no_hwlp
-
-      // Flush the FIFO if it is not empty
-      assign fifo_flush_o             = branch_i;
-      assign fifo_flush_but_first_o   = 1'b0;
-      assign hwlp_flush_resp          = 1'b0;
-      assign hwlp_wait_resp_flush     = 1'b0;
-
-      assign hwlp_flush_after_resp    = 1'b0;
-      assign hwlp_flush_cnt_delayed_q = 2'b00;
-      assign hwlp_flush_resp_delayed  = 1'b0;
-
-
     end
-  endgenerate
+  end
+
+  // This signal is masked by branch_i in the flush counter process,
+  // because if an interrupt occurs during a delayed flush, the interrupt
+  // is served first so the flush should be normal (caused by branch_i)
+  assign hwlp_flush_resp_delayed = hwlp_flush_after_resp && resp_valid_i;
+
 
   //////////////////////////////////////////////////////////////////////////////
   // Counter (flush_cnt_q, next_flush_cnt) to count reseponses to be flushed.
@@ -354,7 +355,7 @@ module cv32e40p_prefetch_controller #(
       state_q     <= next_state;
       cnt_q       <= next_cnt;
       flush_cnt_q <= next_flush_cnt;
-      if (branch_i || hwlp_jump_i || (trans_valid_o && trans_ready_i)) begin
+      if (branch_i || jump_next || (trans_valid_o && trans_ready_i)) begin
         trans_addr_q <= trans_addr_o;
       end
     end
