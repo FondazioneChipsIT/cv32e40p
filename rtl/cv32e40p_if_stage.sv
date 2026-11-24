@@ -96,6 +96,7 @@ module cv32e40p_if_stage #(
     input  logic        bht_taken_if_i,  // the branch history predicts the instruction at pc_if taken
     input  logic        btb_we_i,  // write the entry of the instruction in ID
     input  logic        btb_wvalid_i,
+    input  logic        btb_wjal_i,  // the entry is a jal: taken whatever the branch history says
     input  logic [11:0] btb_wimm_i,  // branch offset [12:1] of the instruction in ID
     output logic        pred_taken_id_o,  // the fetch after the instruction in ID went to a BTB target
     output logic [11:0] pred_imm_id_o,  // branch offset [12:1] the BTB gave to the instruction in ID
@@ -138,11 +139,18 @@ module cv32e40p_if_stage #(
 
   // Branch target buffer: offset of a taken branch, indexed by pc[BTB_ADDR_WIDTH:1]
   localparam int BTB_ADDR_WIDTH = 4;
-  localparam int BTB_TAG_WIDTH = 4;
+  localparam int BTB_TAG_WIDTH = 8;
+  localparam int BTB_OFFSET_WIDTH = 12;  // offset [BTB_OFFSET_WIDTH:1]; longer ones are not stored
 
   logic                      btb_valid_q       [2**BTB_ADDR_WIDTH];
+  logic                      btb_jal_q         [2**BTB_ADDR_WIDTH];
   logic [ BTB_TAG_WIDTH-1:0] btb_tag_q         [2**BTB_ADDR_WIDTH];
-  logic [              11:0] btb_imm_q         [2**BTB_ADDR_WIDTH];
+  logic [BTB_OFFSET_WIDTH-1:0] btb_imm_q       [2**BTB_ADDR_WIDTH];
+  logic                      btb_wfits;
+  logic                      btb_wvalid;
+  logic                      btb_wjal;
+  logic [ BTB_TAG_WIDTH-1:0] btb_wtag;
+  logic [BTB_OFFSET_WIDTH-1:0] btb_wimm;
   logic [BTB_ADDR_WIDTH-1:0] btb_raddr;
   logic [BTB_ADDR_WIDTH-1:0] btb_waddr;
   logic                      btb_we;
@@ -263,23 +271,32 @@ module cv32e40p_if_stage #(
 
 
   //////////////////////////////////////////////////////////////////////////////
-  // Branch target buffer: a branch predicted taken whose offset is in the BTB
-  // fetches its target right after its own word, before it reaches ID. ID checks
+  // Branch target buffer: a jal, or a branch predicted taken, whose offset is in the
+  // BTB fetches its target right after its own word, before it reaches ID. ID checks
   // the instruction and the offset, and redirects the fetch when they differ.
   //////////////////////////////////////////////////////////////////////////////
 
   assign btb_raddr = pc_if_o[BTB_ADDR_WIDTH:1];
   assign btb_hit = btb_valid_q[btb_raddr] &&
       (btb_tag_q[btb_raddr] == pc_if_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH]);
-  assign btb_imm = btb_imm_q[btb_raddr];
+  assign btb_imm = 12'($signed(btb_imm_q[btb_raddr]));
   assign pred_target = pc_if_o + {{19{btb_imm[11]}}, btb_imm, 1'b0};
 
   // A pc_set in the same cycle wins in the prefetcher and in the aligner
-  assign pred_jump = btb_hit && bht_taken_if_i && pred_en_i && pred_ok_align && pred_ok_fetch;
+  assign pred_jump = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i) && pred_en_i &&
+                     pred_ok_align && pred_ok_fetch;
 
   // The entry read by a pending redirect does not change until its instruction is in ID
   assign btb_waddr = pc_id_o[BTB_ADDR_WIDTH:1];
-  assign btb_we    = btb_we_i && !pred_pending_q;
+  // An offset that does not fit keeps the entry it would replace
+  assign btb_wfits = 12'($signed(btb_wimm_i[BTB_OFFSET_WIDTH-1:0])) == btb_wimm_i;
+  assign btb_we    = btb_we_i && !pred_pending_q && (btb_wfits || !btb_wvalid_i);
+
+  // Write data stays at zero between writes: the entries do not follow the instructions in ID
+  assign btb_wvalid = btb_we && btb_wvalid_i;
+  assign btb_wjal   = btb_we && btb_wjal_i;
+  assign btb_wtag   = btb_we ? pc_id_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH] : '0;
+  assign btb_wimm   = btb_we ? btb_wimm_i[BTB_OFFSET_WIDTH-1:0] : '0;
 
   cv32e40p_clock_gate btb_clock_gate_i (
       .clk_i       (clk),
@@ -291,12 +308,14 @@ module cv32e40p_if_stage #(
   always_ff @(posedge clk_btb, negedge rst_n) begin : btb_update
     if (rst_n == 1'b0) begin
       btb_valid_q <= '{default: 1'b0};
+      btb_jal_q   <= '{default: 1'b0};
       btb_tag_q   <= '{default: '0};
       btb_imm_q   <= '{default: '0};
     end else begin
-      btb_valid_q[btb_waddr] <= btb_wvalid_i;
-      btb_tag_q[btb_waddr]   <= pc_id_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH];
-      btb_imm_q[btb_waddr]   <= btb_wimm_i;
+      btb_valid_q[btb_waddr] <= btb_wvalid;
+      btb_jal_q[btb_waddr]   <= btb_wjal;
+      btb_tag_q[btb_waddr]   <= btb_wtag;
+      btb_imm_q[btb_waddr]   <= btb_wimm;
     end
   end
 

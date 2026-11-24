@@ -333,6 +333,7 @@ module cv32e40p_core
   logic                           bht_taken_if;
   logic                           btb_we;
   logic                           btb_wvalid;
+  logic                           btb_wjal;
   logic [                   11:0] btb_wimm;
   logic                           pred_taken_id;
   logic [                   11:0] pred_imm_id;
@@ -505,6 +506,7 @@ module cv32e40p_core
       .bht_taken_if_i (bht_taken_if),
       .btb_we_i       (btb_we),
       .btb_wvalid_i   (btb_wvalid),
+      .btb_wjal_i     (btb_wjal),
       .btb_wimm_i     (btb_wimm),
       .pred_taken_id_o(pred_taken_id),
       .pred_imm_id_o  (pred_imm_id),
@@ -579,6 +581,7 @@ module cv32e40p_core
       .pred_en_o     (pred_en),
       .btb_we_o      (btb_we),
       .btb_wvalid_o  (btb_wvalid),
+      .btb_wjal_o    (btb_wjal),
       .btb_wimm_o    (btb_wimm),
 
       // IF and ID control signals

@@ -80,6 +80,7 @@ module cv32e40p_id_stage
     output logic        pred_en_o,
     output logic        btb_we_o,
     output logic        btb_wvalid_o,
+    output logic        btb_wjal_o,
     output logic [11:0] btb_wimm_o,
 
     // IF and ID stage signals
@@ -319,6 +320,8 @@ module cv32e40p_id_stage
   logic [              31:0] pc_next_id;
   logic                      branch_btb_ok;  // IF fetches the target of the branch in ID
   logic                      branch_btb_bad;  // IF fetched a wrong BTB target
+  logic                      jal_in_dec;
+  logic                      jal_btb_fits;  // the jal offset fits the 12 bits of a BTB entry
 
   logic        misaligned_stall;
   logic        jr_stall;
@@ -643,16 +646,22 @@ module cv32e40p_id_stage
   assign branch_pred_id = bht_q[bht_raddr][1] || pred_taken_i;
   assign bht_taken_if_o = bht_q[pc_if_i[BHT_ADDR_WIDTH:1]][1];
 
-  // The BTB redirect is right if the instruction is a branch with the same offset
-  assign branch_btb_ok  = pred_taken_i && (ctrl_transfer_insn_in_dec_o == BRANCH_COND) &&
-                          (imm_sb_type[12:1] == pred_imm_i);
+  assign jal_in_dec     = ctrl_transfer_insn_in_dec_o == BRANCH_JAL;
+  assign jal_btb_fits   = imm_uj_type[20:13] == {8{imm_uj_type[12]}};
+
+  // The BTB redirect is right if the instruction is a branch or a jal with the same offset
+  assign branch_btb_ok  = pred_taken_i &&
+      (((ctrl_transfer_insn_in_dec_o == BRANCH_COND) && (imm_sb_type[12:1] == pred_imm_i)) ||
+       (jal_in_dec && jal_btb_fits && (imm_uj_type[12:1] == pred_imm_i)));
   assign branch_btb_bad = pred_taken_i && !branch_btb_ok;
 
-  // A branch predicted taken without a BTB redirect writes its offset; a wrong redirect
-  // that is not such a branch clears its entry
-  assign btb_we_o       = instr_valid_i && ((branch_pred_ctrl && !branch_btb_ok) || branch_btb_bad);
-  assign btb_wvalid_o   = branch_pred_ctrl;
-  assign btb_wimm_o     = imm_sb_type[12:1];
+  // A jal, or a branch predicted taken, without a BTB redirect writes its offset; a wrong
+  // redirect that is not such an instruction clears its entry
+  assign btb_we_o       = instr_valid_i &&
+      (((branch_pred_ctrl || (jal_in_dec && jal_btb_fits)) && !branch_btb_ok) || branch_btb_bad);
+  assign btb_wvalid_o   = branch_pred_ctrl || (jal_in_dec && jal_btb_fits);
+  assign btb_wjal_o     = jal_in_dec;
+  assign btb_wimm_o     = jal_in_dec ? imm_uj_type[12:1] : imm_sb_type[12:1];
 
   // The counters are clocked only when a branch resolves in EX
   cv32e40p_clock_gate bht_clock_gate_i (

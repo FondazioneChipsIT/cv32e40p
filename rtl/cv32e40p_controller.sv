@@ -114,7 +114,7 @@ module cv32e40p_controller import cv32e40p_pkg::*;
   input  logic        branch_taken_ex_i,          // branch in EX redirects the fetch (mispredicted)
   input  logic        branch_pred_i,              // the branch history predicts the branch in ID taken
   output logic        branch_pred_id_o,           // the branch in ID fetches its target (predicted taken)
-  input  logic        branch_btb_ok_i,            // IF already fetches the target of the branch in ID
+  input  logic        branch_btb_ok_i,            // IF already fetches the target of the jal or branch in ID
   input  logic        branch_btb_bad_i,           // IF fetched a wrong BTB target after the instruction in ID
   output logic        pred_en_o,                  // IF may fetch a BTB target
   input  logic [1:0]  ctrl_transfer_insn_in_id_i,               // jump is being calculated in ALU
@@ -557,7 +557,7 @@ module cv32e40p_controller import cv32e40p_pkg::*;
                       pc_mux_o = PC_JUMP;
                       // if there is a jr stall, wait for it to be gone
                       if ((~jr_stall_o) && (~jump_done_q)) begin
-                        pc_set_o    = 1'b1;
+                        pc_set_o    = ~branch_btb_ok_i;
                         jump_done   = 1'b1;
                       end
                     end
