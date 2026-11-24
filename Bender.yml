@@ -15,6 +15,9 @@
 package:
   name: cv32e40p
 
+dependencies:
+  fpnew: { git: "https://github.com/pulp-platform/cvfpu.git", rev: pulp-v0.1.3 }
+
 sources:
   include_dirs:
     - rtl/include
@@ -33,6 +36,7 @@ sources:
     - rtl/cv32e40p_int_controller.sv
     - rtl/cv32e40p_ex_stage.sv
     - rtl/cv32e40p_fifo.sv
+    - rtl/cv32e40p_fp_wrapper_pulp.sv
     - rtl/cv32e40p_hwloop_regs.sv
     - rtl/cv32e40p_id_stage.sv
     - rtl/cv32e40p_if_stage.sv
