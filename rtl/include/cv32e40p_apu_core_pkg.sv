@@ -23,7 +23,7 @@ package cv32e40p_apu_core_pkg;
 
   // APU interface
   parameter APU_NARGS_CPU = 3;
-  parameter APU_WOP_CPU = 6;
+  parameter APU_WOP_CPU = 7;  // 1 (vec) + 1 (mod) + fpnew_pkg::OP_BITS (5, incl. DOTP ops)
   parameter APU_NDSFLAGS_CPU = 15;
   parameter APU_NUSFLAGS_CPU = 5;
 

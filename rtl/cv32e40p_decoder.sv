@@ -628,6 +628,7 @@ module cv32e40p_decoder
                 // vfsqrt.vfmt - Vectorial FP Square Root
                 5'b00111: begin
                   regb_used_o = 1'b0;
+                  alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
                   fpu_op      = cv32e40p_fpu_pkg::SQRT;
                   fp_op_group = DIVSQRT;
                   // rs2 and R must be zero
@@ -663,6 +664,7 @@ module cv32e40p_decoder
                 // Moves, Conversions, Classifications
                 5'b01100: begin
                   regb_used_o          = 1'b0;
+                  alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
                   scalar_replication_o = 1'b0;
                   // Decode Operation in rs2
                   unique case (instr_rdata_i[24:20]) inside
@@ -1081,6 +1083,7 @@ module cv32e40p_decoder
             // fsqrt.fmt - FP Square Root
             5'b01011: begin
               regb_used_o = 1'b0;
+              alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
               fpu_op      = cv32e40p_fpu_pkg::SQRT;
               fp_op_group = DIVSQRT;
               // rs2 must be zero
@@ -1095,12 +1098,13 @@ module cv32e40p_decoder
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010], [3'b100:3'b110]})) begin
                   illegal_insn_o = 1'b1;
                 end
+                // The operation (sgnj/sgnjn/sgnjx, min/max, le/lt/eq) is selected by the rounding-mode
+                // field in FPnew, so it must be set for both FP16ALT (bit 14 set) and the other formats
+                fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 // FP16ALT uses special encoding here
                 if (instr_rdata_i[14]) begin
                   fpu_dst_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
                   fpu_src_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
-                end else begin
-                  fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 end
               end else begin
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010]})) illegal_insn_o = 1'b1;
@@ -1115,12 +1119,13 @@ module cv32e40p_decoder
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b001], [3'b100:3'b101]})) begin
                   illegal_insn_o = 1'b1;
                 end
+                // The operation (sgnj/sgnjn/sgnjx, min/max, le/lt/eq) is selected by the rounding-mode
+                // field in FPnew, so it must be set for both FP16ALT (bit 14 set) and the other formats
+                fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 // FP16ALT uses special encoding here
                 if (instr_rdata_i[14]) begin
                   fpu_dst_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
                   fpu_src_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
-                end else begin
-                  fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 end
               end else begin
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b001]})) illegal_insn_o = 1'b1;
@@ -1129,6 +1134,7 @@ module cv32e40p_decoder
             // fcvt.fmt.fmt - FP to FP Conversion
             5'b01000: begin
               regb_used_o   = 1'b0;
+              alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
               fpu_op        = cv32e40p_fpu_pkg::F2F;
               fp_op_group   = CONV;
               // bits [22:20] used, other bits must be 0
@@ -1192,12 +1198,13 @@ module cv32e40p_decoder
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010], [3'b100:3'b110]})) begin
                   illegal_insn_o = 1'b1;
                 end
+                // The operation (sgnj/sgnjn/sgnjx, min/max, le/lt/eq) is selected by the rounding-mode
+                // field in FPnew, so it must be set for both FP16ALT (bit 14 set) and the other formats
+                fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 // FP16ALT uses special encoding here
                 if (instr_rdata_i[14]) begin
                   fpu_dst_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
                   fpu_src_fmt_o = cv32e40p_fpu_pkg::FP16ALT;
-                end else begin
-                  fp_rnd_mode_o = {1'b0, instr_rdata_i[13:12]};
                 end
               end else begin
                 if (!(instr_rdata_i[14:12] inside {[3'b000:3'b010]})) illegal_insn_o = 1'b1;
@@ -1206,6 +1213,7 @@ module cv32e40p_decoder
             // fcvt.ifmt.fmt - FP to Int Conversion
             5'b11000: begin
               regb_used_o = 1'b0;
+              alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
               reg_fp_d_o  = 1'b0; // go to integer regfile
               fpu_op      = cv32e40p_fpu_pkg::F2I;
               fp_op_group = CONV;
@@ -1241,6 +1249,7 @@ module cv32e40p_decoder
             // fcvt.fmt.ifmt - Int to FP Conversion
             5'b11010: begin
               regb_used_o = 1'b0;
+              alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
               reg_fp_a_o  = 1'b0; // go from integer regfile
               fpu_op      = cv32e40p_fpu_pkg::I2F;
               fp_op_group = CONV;
@@ -1251,6 +1260,7 @@ module cv32e40p_decoder
             // move and class
             5'b11100: begin
               regb_used_o = 1'b0;
+              alu_op_b_mux_sel_o = OP_B_REGA_OR_FWD; // rs2 field is not a register: do not track it as an APU read dependency
               reg_fp_d_o  = 1'b0; // go to integer regfile
               fp_op_group = NONCOMP;
               check_fprm  = 1'b0; // instruction encoded in rm, do the check here
