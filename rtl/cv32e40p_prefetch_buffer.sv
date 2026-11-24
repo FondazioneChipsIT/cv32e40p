@@ -30,6 +30,7 @@ module cv32e40p_prefetch_buffer #(
 ) (
     input logic clk,
     input logic rst_n,
+    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     input logic        req_i,
     input logic        branch_i,
@@ -129,7 +130,7 @@ module cv32e40p_prefetch_buffer #(
       .rst_ni           (rst_n),
       .flush_i          (fifo_flush),
       .flush_but_first_i(fifo_flush_but_first),
-      .testmode_i       (1'b0),
+      .testmode_i       (scan_cg_en_i),
       .full_o           (),
       .empty_o          (fifo_empty),
       .cnt_o            (fifo_cnt),
@@ -154,8 +155,9 @@ module cv32e40p_prefetch_buffer #(
 
   instruction_obi_i
   (
-      .clk  (clk),
-      .rst_n(rst_n),
+      .clk         (clk),
+      .rst_n       (rst_n),
+      .scan_cg_en_i(scan_cg_en_i),
 
       .trans_valid_i(trans_valid),
       .trans_ready_o(trans_ready),

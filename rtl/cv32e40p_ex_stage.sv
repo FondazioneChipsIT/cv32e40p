@@ -42,6 +42,7 @@ module cv32e40p_ex_stage
 ) (
     input logic clk,
     input logic rst_n,
+    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // ALU signals from ID stage
     input alu_opcode_e        alu_operator_i,
@@ -267,6 +268,7 @@ module cv32e40p_ex_stage
   cv32e40p_alu alu_i (
       .clk        (clk),
       .rst_n      (rst_n),
+      .scan_cg_en_i(scan_cg_en_i),
       .enable_i   (alu_en_i),
       .operator_i (alu_operator_i),
       .operand_a_i(alu_operand_a_i),
@@ -394,16 +396,32 @@ module cv32e40p_ex_stage
       always_ff @(posedge clk, negedge rst_n) begin : APU_Result_Memorization
         if (~rst_n) begin
           apu_rvalid_q <= 1'b0;
-          apu_result_q <= 'b0;
-          apu_flags_q  <= 'b0;
         end else begin
           if (apu_rvalid_i && apu_hold) begin
             apu_rvalid_q <= 1'b1;
-            apu_result_q <= apu_result_i;
-            apu_flags_q  <= apu_flags_i;
           end else if (apu_rvalid_q && !apu_hold) begin
             apu_rvalid_q <= 1'b0;
           end
+        end
+      end
+
+      // The held result and flags load only when a result meets a busy write port
+      logic clk_apu_result;
+
+      cv32e40p_clock_gate apu_result_clock_gate_i (
+          .clk_i       (clk),
+          .en_i        (apu_rvalid_i && apu_hold),
+          .scan_cg_en_i(scan_cg_en_i),
+          .clk_o       (clk_apu_result)
+      );
+
+      always_ff @(posedge clk_apu_result, negedge rst_n) begin : APU_Result_Data
+        if (~rst_n) begin
+          apu_result_q <= 'b0;
+          apu_flags_q  <= 'b0;
+        end else begin
+          apu_result_q <= apu_result_i;
+          apu_flags_q  <= apu_flags_i;
         end
       end
 

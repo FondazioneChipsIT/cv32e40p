@@ -34,6 +34,7 @@ module cv32e40p_if_stage #(
 ) (
     input logic clk,
     input logic rst_n,
+    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // Used to calculate the exception offsets
     input logic [23:0] m_trap_base_addr_i,
@@ -180,8 +181,9 @@ module cv32e40p_if_stage #(
       .PULP_OBI  (PULP_OBI),
       .COREV_PULP(COREV_PULP)
   ) prefetch_buffer_i (
-      .clk  (clk),
-      .rst_n(rst_n),
+      .clk         (clk),
+      .rst_n       (rst_n),
+      .scan_cg_en_i(scan_cg_en_i),
 
       .req_i(req_i),
 
@@ -257,6 +259,7 @@ module cv32e40p_if_stage #(
   cv32e40p_aligner aligner_i (
       .clk             (clk),
       .rst_n           (rst_n),
+      .scan_cg_en_i    (scan_cg_en_i),
       .fetch_valid_i   (fetch_valid),
       .aligner_ready_o (aligner_ready),
       .if_valid_i      (if_valid),

@@ -430,8 +430,9 @@ module cv32e40p_core
       .FPU        (FPU),
       .ZFINX      (ZFINX)
   ) if_stage_i (
-      .clk  (clk),
-      .rst_n(rst_ni),
+      .clk         (clk),
+      .rst_n       (rst_ni),
+      .scan_cg_en_i(scan_cg_en_i),
 
       // boot address
       .boot_addr_i        (boot_addr_i[31:0]),
@@ -759,8 +760,9 @@ module cv32e40p_core
       .APU_NUSFLAGS_CPU(APU_NUSFLAGS_CPU)
   ) ex_stage_i (
       // Global signals: Clock and active low asynchronous reset
-      .clk  (clk),
-      .rst_n(rst_ni),
+      .clk         (clk),
+      .rst_n       (rst_ni),
+      .scan_cg_en_i(scan_cg_en_i),
 
       // Alu signals from ID stage
       .alu_en_i        (alu_en_ex),
@@ -895,8 +897,9 @@ module cv32e40p_core
   cv32e40p_load_store_unit #(
       .PULP_OBI(PULP_OBI)
   ) load_store_unit_i (
-      .clk  (clk),
-      .rst_n(rst_ni),
+      .clk         (clk),
+      .rst_n       (rst_ni),
+      .scan_cg_en_i(scan_cg_en_i),
 
       //output to data memory
       .data_req_o    (data_req_pmp),
@@ -968,8 +971,9 @@ module cv32e40p_core
       .COREV_CLUSTER   (COREV_CLUSTER),
       .DEBUG_TRIGGER_EN(DEBUG_TRIGGER_EN)
   ) cs_registers_i (
-      .clk  (clk),
-      .rst_n(rst_ni),
+      .clk         (clk),
+      .rst_n       (rst_ni),
+      .scan_cg_en_i(scan_cg_en_i),
 
       // Hart ID from outside
       .hart_id_i       (hart_id_i),

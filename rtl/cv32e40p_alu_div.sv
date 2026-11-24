@@ -29,6 +29,7 @@ module cv32e40p_alu_div #(
 ) (
     input  logic                   Clk_CI,
     input  logic                   Rst_RBI,
+    input  logic                   ScanCgEn_SI,  // enable all clock gates for testing
     // input IF
     input  logic [    C_WIDTH-1:0] OpA_DI,
     input  logic [    C_WIDTH-1:0] OpB_DI,
@@ -192,7 +193,27 @@ module cv32e40p_alu_div #(
 
   always_ff @(posedge Clk_CI or negedge Rst_RBI) begin : p_regs
     if (~Rst_RBI) begin
-      State_SP   <= IDLE;
+      State_SP <= IDLE;
+    end else begin
+      State_SP <= State_SN;
+    end
+  end
+
+  // The datapath registers only change on a load or while dividing: they hold in IDLE and FINISH.
+  logic DataEn_S;
+  logic ClkData_C;
+
+  assign DataEn_S = LoadEn_S | (State_SP == DIVIDE);
+
+  cv32e40p_clock_gate data_clock_gate_i (
+      .clk_i       (Clk_CI),
+      .en_i        (DataEn_S),
+      .scan_cg_en_i(ScanCgEn_SI),
+      .clk_o       (ClkData_C)
+  );
+
+  always_ff @(posedge ClkData_C or negedge Rst_RBI) begin : p_data_regs
+    if (~Rst_RBI) begin
       AReg_DP    <= '0;
       BReg_DP    <= '0;
       ResReg_DP  <= '0;
@@ -201,7 +222,6 @@ module cv32e40p_alu_div #(
       CompInv_SP <= 1'b0;
       ResInv_SP  <= 1'b0;
     end else begin
-      State_SP   <= State_SN;
       AReg_DP    <= AReg_DN;
       BReg_DP    <= BReg_DN;
       ResReg_DP  <= ResReg_DN;

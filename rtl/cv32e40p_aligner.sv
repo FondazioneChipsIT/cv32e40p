@@ -23,6 +23,7 @@
 module cv32e40p_aligner (
     input logic clk,
     input logic rst_n,
+    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     input  logic fetch_valid_i,
     output logic aligner_ready_o,  //prevents overwriting the fethced instruction
@@ -67,7 +68,6 @@ module cv32e40p_aligner (
     if (~rst_n) begin
       state            <= ALIGNED32;
       r_instr_h        <= '0;
-      hwlp_addr_q      <= '0;
       pc_q             <= '0;
       aligner_ready_q  <= 1'b0;
       hwlp_update_pc_q <= 1'b0;
@@ -80,11 +80,28 @@ module cv32e40p_aligner (
         hwlp_update_pc_q <= 1'b0;
       end else begin
         if (hwlp_update_pc_i) begin
-          hwlp_addr_q      <= hwlp_addr_i;  // Save the JUMP target address to keep pc_n up to date during the stall
           hwlp_update_pc_q <= 1'b1;
         end
 
       end
+    end
+  end
+
+  // hwlp_addr_q saves the JUMP target address to keep pc_n up to date during the stall
+  logic clk_hwlp_addr;
+
+  cv32e40p_clock_gate hwlp_addr_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (!update_state && hwlp_update_pc_i),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_hwlp_addr)
+  );
+
+  always_ff @(posedge clk_hwlp_addr or negedge rst_n) begin : proc_HWLP_ADDR
+    if (~rst_n) begin
+      hwlp_addr_q <= '0;
+    end else begin
+      hwlp_addr_q <= hwlp_addr_i;
     end
   end
 

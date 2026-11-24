@@ -46,6 +46,7 @@ module cv32e40p_cs_registers
     // Clock and Reset
     input logic clk,
     input logic rst_n,
+    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // Hart ID
     input  logic [31:0] hart_id_i,
@@ -1192,22 +1193,6 @@ module cv32e40p_cs_registers
           mpp: PRIV_LVL_M,
           mprv: 1'b0
       };
-      mepc_q <= '0;
-      mcause_q <= '0;
-
-      depc_q <= '0;
-      dcsr_q <= '{
-          xdebugver: XDEBUGVER_STD,
-          cause: DBG_CAUSE_NONE,  // 3'h0
-          prv: PRIV_LVL_M,
-          default: '0
-      };
-      dscratch0_q <= '0;
-      dscratch1_q <= '0;
-      mscratch_q <= '0;
-      mie_q <= '0;
-      mtvec_q <= '0;
-      mtvec_mode_q <= MTVEC_MODE;
     end else begin
       // update CSRs, each group only when its _n can differ from its _q (clock gating)
       if (FPU == 1) begin
@@ -1229,22 +1214,75 @@ module cv32e40p_cs_registers
             mprv: 1'b0
         };
       end
-      if (csr_we_int || csr_save_cause_i) begin
-        mepc_q   <= mepc_n;
-        mcause_q <= mcause_n;
-        depc_q   <= depc_n;
-        dcsr_q   <= dcsr_n;
-      end
-      if (csr_we_int) begin
-        dscratch0_q <= dscratch0_n;
-        dscratch1_q <= dscratch1_n;
-        mscratch_q  <= mscratch_n;
-        mie_q       <= mie_n;
-      end
-      if (csr_we_int || csr_mtvec_init_i) begin
-        mtvec_q      <= mtvec_n;
-        mtvec_mode_q <= mtvec_mode_n;
-      end
+    end
+  end
+
+  // Wide CSR groups change only on a CSR write or a trap: each one has its own clock gate.
+  logic clk_csr_trap;  // mepc, mcause, depc, dcsr: CSR write or trap/debug entry
+  logic clk_csr_write;  // dscratch0/1, mscratch, mie: CSR write
+  logic clk_csr_mtvec;  // mtvec: CSR write or boot address load
+
+  cv32e40p_clock_gate csr_trap_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (csr_we_int || csr_save_cause_i),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_csr_trap)
+  );
+
+  cv32e40p_clock_gate csr_write_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (csr_we_int),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_csr_write)
+  );
+
+  cv32e40p_clock_gate csr_mtvec_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (csr_we_int || csr_mtvec_init_i),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_csr_mtvec)
+  );
+
+  always_ff @(posedge clk_csr_trap, negedge rst_n) begin
+    if (rst_n == 1'b0) begin
+      mepc_q   <= '0;
+      mcause_q <= '0;
+      depc_q   <= '0;
+      dcsr_q   <= '{
+          xdebugver: XDEBUGVER_STD,
+          cause: DBG_CAUSE_NONE,  // 3'h0
+          prv: PRIV_LVL_M,
+          default: '0
+      };
+    end else begin
+      mepc_q   <= mepc_n;
+      mcause_q <= mcause_n;
+      depc_q   <= depc_n;
+      dcsr_q   <= dcsr_n;
+    end
+  end
+
+  always_ff @(posedge clk_csr_write, negedge rst_n) begin
+    if (rst_n == 1'b0) begin
+      dscratch0_q <= '0;
+      dscratch1_q <= '0;
+      mscratch_q  <= '0;
+      mie_q       <= '0;
+    end else begin
+      dscratch0_q <= dscratch0_n;
+      dscratch1_q <= dscratch1_n;
+      mscratch_q  <= mscratch_n;
+      mie_q       <= mie_n;
+    end
+  end
+
+  always_ff @(posedge clk_csr_mtvec, negedge rst_n) begin
+    if (rst_n == 1'b0) begin
+      mtvec_q      <= '0;
+      mtvec_mode_q <= MTVEC_MODE;
+    end else begin
+      mtvec_q      <= mtvec_n;
+      mtvec_mode_q <= mtvec_mode_n;
     end
   end
   ////////////////////////////////////////////////////////////////////////
@@ -1273,10 +1311,25 @@ module cv32e40p_cs_registers
     always_ff @(posedge clk or negedge rst_n) begin
       if (!rst_n) begin
         tmatch_control_exec_q <= 'b0;
-        tmatch_value_q        <= 'b0;
       end else begin
         if (tmatch_control_we) tmatch_control_exec_q <= csr_wdata_int[2];
-        if (tmatch_value_we) tmatch_value_q <= csr_wdata_int[31:0];
+      end
+    end
+
+    logic clk_tmatch_value;  // ticks only when tdata2 is written
+
+    cv32e40p_clock_gate tmatch_value_clock_gate_i (
+        .clk_i       (clk),
+        .en_i        (tmatch_value_we),
+        .scan_cg_en_i(scan_cg_en_i),
+        .clk_o       (clk_tmatch_value)
+    );
+
+    always_ff @(posedge clk_tmatch_value or negedge rst_n) begin
+      if (!rst_n) begin
+        tmatch_value_q <= 'b0;
+      end else begin
+        tmatch_value_q <= csr_wdata_int[31:0];
       end
     end
 
@@ -1466,28 +1519,75 @@ module cv32e40p_cs_registers
       // Programable HPM counters start at index 3
       if ((cnt_gidx == 1) || (cnt_gidx >= (NUM_MHPMCOUNTERS + 3))) begin : gen_non_implemented
         assign mhpmcounter_q[cnt_gidx] = 'b0;
+      end else if (PULP_PERF_COUNTERS && (cnt_gidx == 2 || cnt_gidx == 0)) begin : gen_tied_zero
+        assign mhpmcounter_q[cnt_gidx] = 'b0;
       end else begin : gen_implemented
-        always_ff @(posedge clk, negedge rst_n)
+        // Each half is clocked only when it changes: the upper half on a write or a carry.
+        logic clk_lower;
+        logic en_lower;
+
+        assign en_lower = mhpmcounter_write_lower[cnt_gidx] ||
+                          mhpmcounter_write_increment[cnt_gidx];
+
+        cv32e40p_clock_gate mhpmcounter_lower_clock_gate_i (
+            .clk_i       (clk),
+            .en_i        (en_lower),
+            .scan_cg_en_i(scan_cg_en_i),
+            .clk_o       (clk_lower)
+        );
+
+        always_ff @(posedge clk_lower, negedge rst_n)
           if (!rst_n) begin
-            mhpmcounter_q[cnt_gidx] <= 'b0;
+            mhpmcounter_q[cnt_gidx][31:0] <= 'b0;
           end else begin
-            if (PULP_PERF_COUNTERS && (cnt_gidx == 2 || cnt_gidx == 0)) begin
-              mhpmcounter_q[cnt_gidx] <= 'b0;
-            end else begin
-              if (mhpmcounter_write_lower[cnt_gidx]) begin
-                mhpmcounter_q[cnt_gidx][31:0] <= csr_wdata_int;
-              end else if (mhpmcounter_write_upper[cnt_gidx]) begin
-                mhpmcounter_q[cnt_gidx][63:32] <= csr_wdata_int;
-              end else if (mhpmcounter_write_increment[cnt_gidx]) begin
-                mhpmcounter_q[cnt_gidx] <= mhpmcounter_increment[cnt_gidx];
-              end
-            end
+            mhpmcounter_q[cnt_gidx][31:0] <= mhpmcounter_write_lower[cnt_gidx] ?
+                                             csr_wdata_int :
+                                             mhpmcounter_increment[cnt_gidx][31:0];
           end
+
+        if (MHPMCOUNTER_WIDTH > 32) begin : gen_upper
+          logic clk_upper;
+          logic en_upper;
+
+          assign en_upper = mhpmcounter_write_upper[cnt_gidx] ||
+                            (mhpmcounter_write_increment[cnt_gidx] &&
+                             (mhpmcounter_q[cnt_gidx][31:0] == '1));
+
+          cv32e40p_clock_gate mhpmcounter_upper_clock_gate_i (
+              .clk_i       (clk),
+              .en_i        (en_upper),
+              .scan_cg_en_i(scan_cg_en_i),
+              .clk_o       (clk_upper)
+          );
+
+          always_ff @(posedge clk_upper, negedge rst_n)
+            if (!rst_n) begin
+              mhpmcounter_q[cnt_gidx][MHPMCOUNTER_WIDTH-1:32] <= 'b0;
+            end else begin
+              mhpmcounter_q[cnt_gidx][MHPMCOUNTER_WIDTH-1:32] <=
+                  mhpmcounter_write_upper[cnt_gidx] ?
+                  csr_wdata_int[MHPMCOUNTER_WIDTH-33:0] :
+                  mhpmcounter_increment[cnt_gidx][MHPMCOUNTER_WIDTH-1:32];
+            end
+        end
       end
     end
   endgenerate
 
   //  Event Register: mhpevent_q[]
+  logic clk_mhpmevent;  // ticks only when an mhpmevent register is written
+
+  if (NUM_MHPMCOUNTERS > 0) begin : gen_mhpmevent_clock_gate
+    cv32e40p_clock_gate mhpmevent_clock_gate_i (
+        .clk_i       (clk),
+        .en_i        (mhpmevent_we),
+        .scan_cg_en_i(scan_cg_en_i),
+        .clk_o       (clk_mhpmevent)
+    );
+  end else begin : gen_no_mhpmevent_clock_gate
+    assign clk_mhpmevent = 1'b0;
+  end
+
   genvar evt_gidx;
   generate
     for (evt_gidx = 0; evt_gidx < 32; evt_gidx++) begin : gen_mhpmevent
@@ -1498,10 +1598,9 @@ module cv32e40p_cs_registers
         if (NUM_HPM_EVENTS < 32) begin : gen_tie_off
           assign mhpmevent_q[evt_gidx][31:NUM_HPM_EVENTS] = 'b0;
         end
-        always_ff @(posedge clk, negedge rst_n)
+        always_ff @(posedge clk_mhpmevent, negedge rst_n)
           if (!rst_n) mhpmevent_q[evt_gidx][NUM_HPM_EVENTS-1:0] <= 'b0;
-          else if (mhpmevent_we)
-            mhpmevent_q[evt_gidx][NUM_HPM_EVENTS-1:0] <= mhpmevent_n[evt_gidx][NUM_HPM_EVENTS-1:0];
+          else mhpmevent_q[evt_gidx][NUM_HPM_EVENTS-1:0] <= mhpmevent_n[evt_gidx][NUM_HPM_EVENTS-1:0];
       end
     end
   endgenerate
@@ -1525,15 +1624,24 @@ module cv32e40p_cs_registers
 
   //  Inhibit Regsiter: mcountinhibit_q
   //  Note: implemented counters are disabled out of reset to save power
+  logic clk_mcountinhibit;  // ticks only when mcountinhibit is written
+
+  cv32e40p_clock_gate mcountinhibit_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (mcountinhibit_we),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_mcountinhibit)
+  );
+
   genvar inh_gidx;
   generate
     for (inh_gidx = 0; inh_gidx < 32; inh_gidx++) begin : gen_mcountinhibit
       if ((inh_gidx == 1) || (inh_gidx >= (NUM_MHPMCOUNTERS + 3))) begin : gen_non_implemented
         assign mcountinhibit_q[inh_gidx] = 'b0;
       end else begin : gen_implemented
-        always_ff @(posedge clk, negedge rst_n)
+        always_ff @(posedge clk_mcountinhibit, negedge rst_n)
           if (!rst_n) mcountinhibit_q[inh_gidx] <= 'b1;  // default disable
-          else if (mcountinhibit_we) mcountinhibit_q[inh_gidx] <= mcountinhibit_n[inh_gidx];
+          else mcountinhibit_q[inh_gidx] <= mcountinhibit_n[inh_gidx];
       end
     end
   endgenerate
