@@ -175,15 +175,22 @@ module cv32e40p_alu
 
 
   // normalization stage
+  logic        adder_round_op;
+  logic [31:0] adder_round_bit;
   logic [31:0] adder_round_value;
+  logic [31:0] adder_round_sum;
   logic [31:0] adder_round_result;
 
-  assign adder_round_value  = ((operator_i == ALU_ADDR) || (operator_i == ALU_SUBR) ||
-                               (operator_i == ALU_ADDUR) || (operator_i == ALU_SUBUR)) ?
-                                {
-    1'b0, bmask[31:1]
-  } : '0;
-  assign adder_round_result = adder_result + adder_round_value;
+  assign adder_round_op = (operator_i == ALU_ADDR) || (operator_i == ALU_SUBR) ||
+                          (operator_i == ALU_ADDUR) || (operator_i == ALU_SUBUR);
+  // 2^(Is3-1): the decoder gives the rounding operators bmask_a = 0, so bmask is 1 << bmask_b
+  // (decoded here instead of the two bmask shifters)
+  assign adder_round_bit = 32'h1 << bmask_b_i;
+  assign adder_round_value = {1'b0, adder_round_bit[31:1]};
+  // The rounding operations are scalar (VEC_MODE32): one three-operand sum, so that their rounding
+  // carry chain does not follow the adder on the path to the shifter.
+  assign adder_round_sum = adder_op_a + adder_op_b + adder_round_value + {31'b0, adder_op_b_negate};
+  assign adder_round_result = adder_round_op ? adder_round_sum : adder_result;
 
 
   ////////////////////////////////////////
