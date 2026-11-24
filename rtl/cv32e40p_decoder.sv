@@ -893,13 +893,13 @@ module cv32e40p_decoder
 
               // Set latencies for FPnew from config (number of pipeline registers, see apu_lat_code)
               case (fp_op_group)
-                // ADDMUL has format dependent latency
+                // ADDMUL is one merged unit: the same latency for every format
                 ADDMUL : begin
                   unique case (fpu_dst_fmt_o)
                     cv32e40p_fpu_pkg::FP32    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
-                    cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(C_LAT_FP16);
-                    cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(C_LAT_FP16ALT);
-                    cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(C_LAT_FP8);
+                    cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                    cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                    cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
                     default : ;
                   endcase
                 end
@@ -1355,14 +1355,14 @@ module cv32e40p_decoder
 
           // Set latencies for FPnew from config (number of pipeline registers, see apu_lat_code)
           case (fp_op_group)
-            // ADDMUL has format dependent latency
+            // ADDMUL is one merged unit: the same latency for every format
             ADDMUL : begin
               unique case (fpu_dst_fmt_o)
                 cv32e40p_fpu_pkg::FP32    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
-                cv32e40p_fpu_pkg::FP64    : apu_lat_o = apu_lat_code(C_LAT_FP64);
-                cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(C_LAT_FP16);
-                cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(C_LAT_FP16ALT);
-                cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(C_LAT_FP8);
+                cv32e40p_fpu_pkg::FP64    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+                cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
                 default : ;
               endcase
             end
@@ -1484,13 +1484,13 @@ module cv32e40p_decoder
           endcase
 
           // Set latencies for FPnew from config (number of pipeline registers, see apu_lat_code)
-          // format dependent latency
+          // ADDMUL is one merged unit: the same latency for every format
           unique case (fpu_dst_fmt_o)
             cv32e40p_fpu_pkg::FP32    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
-            cv32e40p_fpu_pkg::FP64    : apu_lat_o = apu_lat_code(C_LAT_FP64);
-            cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(C_LAT_FP16);
-            cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(C_LAT_FP16ALT);
-            cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(C_LAT_FP8);
+            cv32e40p_fpu_pkg::FP64    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+            cv32e40p_fpu_pkg::FP16    : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+            cv32e40p_fpu_pkg::FP16ALT : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
+            cv32e40p_fpu_pkg::FP8     : apu_lat_o = apu_lat_code(FPU_ADDMUL_LAT);
             default : ;
           endcase
 

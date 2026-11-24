@@ -78,10 +78,9 @@ module cv32e40p_fp_wrapper
 
   // Implementation (number of registers etc)
   localparam fpnew_pkg::fpu_implementation_t FPU_IMPLEMENTATION = '{
-    PipeRegs:  '{// FP32, FP64, FP16, FP8, FP16alt
-                  '{regs(FPU_ADDMUL_LAT), regs(C_LAT_FP64), regs(C_LAT_FP16), regs(C_LAT_FP8),
-                    regs(C_LAT_FP16ALT), regs(C_LAT_FP8_ALT)
-                  }, // ADDMUL
+    // ADDMUL is one merged unit for all formats: it gets the largest register count of its formats, so all of
+    // them take FPU_ADDMUL_LAT (the decoder announces the same latency for every format)
+    PipeRegs:  '{'{default: regs(FPU_ADDMUL_LAT)}, // ADDMUL
                   '{default: regs(C_LAT_DIVSQRT)}, // DIVSQRT
                   '{default: regs(FPU_OTHERS_LAT)}, // NONCOMP, latency as in the decoder
                   '{default: regs(FPU_OTHERS_LAT)}, // CONV, latency as in the decoder
