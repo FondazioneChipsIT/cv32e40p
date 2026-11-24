@@ -297,6 +297,17 @@ module cv32e40p_id_stage
   logic [ 1:0] ctrl_transfer_insn_in_id;
   logic [ 1:0] ctrl_transfer_insn_in_dec;
 
+  // Branch prediction
+  localparam int BHT_ADDR_WIDTH = 5;  // 32 counters
+  logic [               1:0] bht_q           [2**BHT_ADDR_WIDTH];
+  logic [BHT_ADDR_WIDTH-1:0] bht_raddr;
+  logic [BHT_ADDR_WIDTH-1:0] bht_waddr;
+  logic                      clk_bht;
+  logic                      branch_pred_id;  // the counter of the instruction in ID says taken
+  logic                      branch_pred_ctrl;  // the branch in ID fetches its target
+  logic                      branch_pred_ex;  // the branch in EX fetched its target
+  logic [              31:0] pc_next_id;
+
   logic        misaligned_stall;
   logic        jr_stall;
   logic        load_stall;
@@ -576,7 +587,9 @@ module cv32e40p_id_stage
   // signal to 0 for instructions that are done
   assign clear_instr_valid_o = id_ready_o | halt_id | branch_taken_ex;
 
-  assign branch_taken_ex = branch_in_ex_o && branch_decision_i;
+  // The branch in EX redirects the fetch (and kills ID) when its outcome differs from its
+  // prediction; the name is kept for the testbench probes
+  assign branch_taken_ex = branch_in_ex_o && (branch_decision_i != branch_pred_ex);
 
 
   assign mult_en = mult_int_en | mult_dot_en;
@@ -603,6 +616,38 @@ module cv32e40p_id_stage
   end
 
   assign jump_target_o = jump_target;
+
+  // Address of the instruction after the one in ID: where a branch predicted taken resumes
+  assign pc_next_id = pc_id_i + (is_compressed_i ? 32'd2 : 32'd4);
+
+
+  ///////////////////////////////////////////////////////////////////
+  // Branch history: 2-bit saturating counters indexed by pc[N:1]  //
+  ///////////////////////////////////////////////////////////////////
+
+  assign bht_raddr      = pc_id_i[BHT_ADDR_WIDTH:1];
+  assign bht_waddr      = pc_ex_o[BHT_ADDR_WIDTH:1];
+  assign branch_pred_id = bht_q[bht_raddr][1];
+
+  // The counters are clocked only when a branch resolves in EX
+  cv32e40p_clock_gate bht_clock_gate_i (
+      .clk_i       (clk),
+      .en_i        (branch_in_ex_o),
+      .scan_cg_en_i(scan_cg_en_i),
+      .clk_o       (clk_bht)
+  );
+
+  always_ff @(posedge clk_bht, negedge rst_n) begin : bht_update
+    if (rst_n == 1'b0) begin
+      bht_q <= '{default: 2'b01};
+    end else begin
+      if (branch_decision_i && (bht_q[bht_waddr] != 2'b11)) begin
+        bht_q[bht_waddr] <= bht_q[bht_waddr] + 2'b01;
+      end else if (!branch_decision_i && (bht_q[bht_waddr] != 2'b00)) begin
+        bht_q[bht_waddr] <= bht_q[bht_waddr] - 2'b01;
+      end
+    end
+  end
 
 
   ////////////////////////////////////////////////////////
@@ -782,8 +827,9 @@ module cv32e40p_id_stage
         operand_c           = operand_b_rfwb_id;
         alu_operand_c_fw_ex = operand_b_fw_ex;
       end
+      // A branch predicted taken carries the address it resumes at if not taken
       OP_C_JT: begin
-        operand_c           = jump_target;
+        operand_c           = branch_pred_ctrl ? pc_next_id : jump_target;
         alu_operand_c_fw_ex = 1'b0;
       end
       default: begin
@@ -1295,6 +1341,8 @@ module cv32e40p_id_stage
 
       // jump/branch control
       .branch_taken_ex_i          (branch_taken_ex),
+      .branch_pred_i              (branch_pred_id),
+      .branch_pred_id_o           (branch_pred_ctrl),
       .ctrl_transfer_insn_in_id_i (ctrl_transfer_insn_in_id),
       .ctrl_transfer_insn_in_dec_i(ctrl_transfer_insn_in_dec_o),
 
@@ -1579,6 +1627,7 @@ module cv32e40p_id_stage
       data_misaligned_ex_o   <= 1'b0;
 
       branch_in_ex_o         <= 1'b0;
+      branch_pred_ex         <= 1'b0;
 
     end else if (data_misaligned_i) begin
       // misaligned data access case
@@ -1643,6 +1692,7 @@ module cv32e40p_id_stage
         data_misaligned_ex_o <= 1'b0;
 
         branch_in_ex_o <= ctrl_transfer_insn_in_id == BRANCH_COND;
+        branch_pred_ex <= (ctrl_transfer_insn_in_id == BRANCH_COND) && branch_pred_ctrl;
       end else if (ex_ready_i) begin
         // EX stage is ready but we don't have a new instruction for it,
         // so we set all write enables to 0, but unstall the pipe
@@ -1660,6 +1710,7 @@ module cv32e40p_id_stage
         data_misaligned_ex_o <= 1'b0;
 
         branch_in_ex_o       <= 1'b0;
+        branch_pred_ex       <= 1'b0;
 
         apu_en_ex_o          <= 1'b0;
 

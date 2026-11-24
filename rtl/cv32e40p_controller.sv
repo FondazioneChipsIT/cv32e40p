@@ -111,7 +111,9 @@ module cv32e40p_controller import cv32e40p_pkg::*;
   output logic        apu_stall_o,
 
   // jump/branch signals
-  input  logic        branch_taken_ex_i,          // branch taken signal from EX ALU
+  input  logic        branch_taken_ex_i,          // branch in EX redirects the fetch (mispredicted)
+  input  logic        branch_pred_i,              // the branch history predicts the branch in ID taken
+  output logic        branch_pred_id_o,           // the branch in ID fetches its target (predicted taken)
   input  logic [1:0]  ctrl_transfer_insn_in_id_i,               // jump is being calculated in ALU
   input  logic [1:0]  ctrl_transfer_insn_in_dec_i,              // jump is being calculated in ALU
 
@@ -209,7 +211,7 @@ module cv32e40p_controller import cv32e40p_pkg::*;
   // Debug state
   debug_state_e debug_fsm_cs, debug_fsm_ns;
 
-  logic jump_done, jump_done_q, jump_in_dec, branch_in_id;
+  logic jump_done, jump_done_q, jump_in_dec, branch_in_id, branch_pred_dec;
 
   logic data_err_q;
 
@@ -295,6 +297,10 @@ module cv32e40p_controller import cv32e40p_pkg::*;
     jump_in_dec            = ctrl_transfer_insn_in_dec_i == BRANCH_JALR || ctrl_transfer_insn_in_dec_i == BRANCH_JAL;
 
     branch_in_id           = ctrl_transfer_insn_in_id_i == BRANCH_COND;
+
+    // Only DECODE predicts: there the branch fetches its target before it can enter EX
+    branch_pred_dec        = (ctrl_transfer_insn_in_dec_i == BRANCH_COND) && branch_pred_i &&
+                             (ctrl_fsm_cs == DECODE);
 
     ebrk_force_debug_mode  = (debug_ebreakm_i && current_priv_lvl_i == PRIV_LVL_M) ||
                              (debug_ebreaku_i && current_priv_lvl_i == PRIV_LVL_U);
@@ -548,6 +554,16 @@ module cv32e40p_controller import cv32e40p_pkg::*;
                       pc_mux_o = PC_JUMP;
                       // if there is a jr stall, wait for it to be gone
                       if ((~jr_stall_o) && (~jump_done_q)) begin
+                        pc_set_o    = 1'b1;
+                        jump_done   = 1'b1;
+                      end
+                    end
+
+                    branch_pred_dec: begin
+                    // a branch predicted taken fetches its target like a jump; EX redirects
+                    // the fetch to the next instruction if the branch is not taken
+                      pc_mux_o = PC_JUMP;
+                      if (~jump_done_q) begin
                         pc_set_o    = 1'b1;
                         jump_done   = 1'b1;
                       end
@@ -1386,6 +1402,8 @@ endgenerate
   // stall because of misaligned data access
   assign misaligned_stall_o = data_misaligned_i;
 
+  assign branch_pred_id_o = branch_pred_dec;
+
   // APU dependency stalls (data hazards)
   assign apu_stall_o = apu_read_dep_i | (apu_write_dep_i & ~apu_en_i);
 
@@ -1448,8 +1466,8 @@ endgenerate
     begin
       ctrl_fsm_cs        <= ctrl_fsm_ns;
 
-      // clear when id is valid (no instruction incoming)
-      jump_done_q        <= jump_done & (~id_ready_i);
+      // clear when the instruction leaves ID or is killed there
+      jump_done_q        <= jump_done & (~id_ready_i) & (~halt_id_o) & (~branch_taken_ex_i);
 
       data_err_q         <= data_err_i;
 
