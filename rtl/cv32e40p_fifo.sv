@@ -38,13 +38,15 @@ module cv32e40p_fifo #(
   // local parameter
   // FIFO depth - handle the case of pass-through, synthesizer will do constant propagation
   localparam int unsigned FIFO_DEPTH = (DEPTH > 0) ? DEPTH : 1;
+  // clock gating control
+  logic gate_clock;
   // pointer to the read and write section of the queue
   logic [ADDR_DEPTH - 1:0] read_pointer_n, read_pointer_q, write_pointer_n, write_pointer_q;
   // keep a counter to keep track of the current queue status
   logic [ADDR_DEPTH:0]
       status_cnt_n, status_cnt_q;  // this integer will be truncated by the synthesis tool
   // actual memory
-  logic [FIFO_DEPTH - 1:0][DATA_WIDTH-1:0] mem_q;
+  logic [FIFO_DEPTH - 1:0][DATA_WIDTH-1:0] mem_n, mem_q;
 
   assign cnt_o = status_cnt_q;
 
@@ -66,9 +68,15 @@ module cv32e40p_fifo #(
     write_pointer_n = write_pointer_q;
     status_cnt_n    = status_cnt_q;
     data_o          = (DEPTH == 0) ? data_i : mem_q[read_pointer_q];
+    mem_n           = mem_q;
+    gate_clock      = 1'b1;
 
     // push a new element to the queue
     if (push_i && ~full_o) begin
+      // push the data onto the queue
+      mem_n[write_pointer_q] = data_i;
+      // un-gate the clock, we want to write something
+      gate_clock = 1'b0;
       // increment the write counter
       if (write_pointer_q == FIFO_DEPTH[ADDR_DEPTH-1:0] - 1) write_pointer_n = '0;
       else write_pointer_n = write_pointer_q + 1;
@@ -129,23 +137,11 @@ module cv32e40p_fifo #(
     end
   end
 
-  // Each entry is clocked only when data is pushed into it
-  for (genvar i = 0; i < FIFO_DEPTH; i++) begin : gen_mem
-    logic clk_entry;
-
-    cv32e40p_clock_gate entry_clock_gate_i (
-        .clk_i       (clk_i),
-        .en_i        (push_i && ~full_o && (write_pointer_q == i)),
-        .scan_cg_en_i(testmode_i),
-        .clk_o       (clk_entry)
-    );
-
-    always_ff @(posedge clk_entry or negedge rst_ni) begin
-      if (~rst_ni) begin
-        mem_q[i] <= '0;
-      end else begin
-        mem_q[i] <= data_i;
-      end
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) begin
+      mem_q <= '0;
+    end else if (!gate_clock) begin
+      mem_q <= mem_n;
     end
   end
 

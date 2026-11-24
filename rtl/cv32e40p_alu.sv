@@ -30,7 +30,6 @@ module cv32e40p_alu
 (
     input logic               clk,
     input logic               rst_n,
-    input logic               scan_cg_en_i,  // Enable all clock gates for testing
     input logic               enable_i,
     input alu_opcode_e        operator_i,
     input logic        [31:0] operand_a_i,
@@ -897,9 +896,8 @@ module cv32e40p_alu
 
   // inputs A and B are swapped
   cv32e40p_alu_div alu_div_i (
-      .Clk_CI     (clk),
-      .Rst_RBI    (rst_n),
-      .ScanCgEn_SI(scan_cg_en_i),
+      .Clk_CI (clk),
+      .Rst_RBI(rst_n),
 
       // input IF
       .OpA_DI      (operand_b_i),

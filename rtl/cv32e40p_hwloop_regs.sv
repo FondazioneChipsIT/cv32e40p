@@ -28,7 +28,6 @@ module cv32e40p_hwloop_regs #(
 ) (
     input logic clk,
     input logic rst_n,
-    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // from ex stage
     input logic [          31:0] hwlp_start_data_i,
@@ -54,6 +53,8 @@ module cv32e40p_hwloop_regs #(
   logic [N_REGS-1:0][31:0] hwlp_end_q;
   logic [N_REGS-1:0][31:0] hwlp_counter_q, hwlp_counter_n;
 
+  int unsigned i;
+
 
   assign hwlp_start_addr_o = hwlp_start_q;
   assign hwlp_end_addr_o   = hwlp_end_q;
@@ -61,59 +62,47 @@ module cv32e40p_hwloop_regs #(
 
 
   /////////////////////////////////////////////////////////////////////////////////
-  // HWLOOP registers, each one clocked only when written or decremented         //
+  // HWLOOP start-address register                                               //
+  /////////////////////////////////////////////////////////////////////////////////
+  always_ff @(posedge clk, negedge rst_n) begin : HWLOOP_REGS_START
+    if (rst_n == 1'b0) begin
+      hwlp_start_q <= '{default: 32'b0};
+    end else if (hwlp_we_i[0] == 1'b1) begin
+      hwlp_start_q[hwlp_regid_i] <= {hwlp_start_data_i[31:2], 2'b0};
+    end
+  end
+
+
+  /////////////////////////////////////////////////////////////////////////////////
+  // HWLOOP end-address register                                                 //
+  /////////////////////////////////////////////////////////////////////////////////
+  always_ff @(posedge clk, negedge rst_n) begin : HWLOOP_REGS_END
+    if (rst_n == 1'b0) begin
+      hwlp_end_q <= '{default: 32'b0};
+    end else if (hwlp_we_i[1] == 1'b1) begin
+      hwlp_end_q[hwlp_regid_i] <= {hwlp_end_data_i[31:2], 2'b0};
+    end
+  end
+
+
+  /////////////////////////////////////////////////////////////////////////////////
+  // HWLOOP counter register with decrement logic                                //
   /////////////////////////////////////////////////////////////////////////////////
   genvar k;
-  for (k = 0; k < N_REGS; k++) begin : gen_hwlp_regs
-    logic clk_start, clk_end, clk_counter;
-    logic counter_we;
-
+  for (k = 0; k < N_REGS; k++) begin
     assign hwlp_counter_n[k] = hwlp_counter_q[k] - 1;
-    assign counter_we        = hwlp_we_i[2] && (hwlp_regid_i == k);
+  end
 
-    cv32e40p_clock_gate start_clock_gate_i (
-        .clk_i       (clk),
-        .en_i        (hwlp_we_i[0] && (hwlp_regid_i == k)),
-        .scan_cg_en_i(scan_cg_en_i),
-        .clk_o       (clk_start)
-    );
-
-    cv32e40p_clock_gate end_clock_gate_i (
-        .clk_i       (clk),
-        .en_i        (hwlp_we_i[1] && (hwlp_regid_i == k)),
-        .scan_cg_en_i(scan_cg_en_i),
-        .clk_o       (clk_end)
-    );
-
-    cv32e40p_clock_gate counter_clock_gate_i (
-        .clk_i       (clk),
-        .en_i        (counter_we || (hwlp_dec_cnt_i[k] && valid_i)),
-        .scan_cg_en_i(scan_cg_en_i),
-        .clk_o       (clk_counter)
-    );
-
-    always_ff @(posedge clk_start, negedge rst_n) begin : HWLOOP_REGS_START
-      if (rst_n == 1'b0) begin
-        hwlp_start_q[k] <= 32'b0;
-      end else begin
-        hwlp_start_q[k] <= {hwlp_start_data_i[31:2], 2'b0};
-      end
-    end
-
-    always_ff @(posedge clk_end, negedge rst_n) begin : HWLOOP_REGS_END
-      if (rst_n == 1'b0) begin
-        hwlp_end_q[k] <= 32'b0;
-      end else begin
-        hwlp_end_q[k] <= {hwlp_end_data_i[31:2], 2'b0};
-      end
-    end
-
-    // A write has priority over a decrement
-    always_ff @(posedge clk_counter, negedge rst_n) begin : HWLOOP_REGS_COUNTER
-      if (rst_n == 1'b0) begin
-        hwlp_counter_q[k] <= 32'b0;
-      end else begin
-        hwlp_counter_q[k] <= counter_we ? hwlp_cnt_data_i : hwlp_counter_n[k];
+  always_ff @(posedge clk, negedge rst_n) begin : HWLOOP_REGS_COUNTER
+    if (rst_n == 1'b0) begin
+      hwlp_counter_q <= '{default: 32'b0};
+    end else begin
+      for (i = 0; i < N_REGS; i++) begin
+        if ((hwlp_we_i[2] == 1'b1) && (i == hwlp_regid_i)) begin
+          hwlp_counter_q[i] <= hwlp_cnt_data_i;
+        end else begin
+          if (hwlp_dec_cnt_i[i] && valid_i) hwlp_counter_q[i] <= hwlp_counter_n[i];
+        end
       end
     end
   end

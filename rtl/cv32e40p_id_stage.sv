@@ -1521,9 +1521,8 @@ module cv32e40p_id_stage
       cv32e40p_hwloop_regs #(
           .N_REGS(N_HWLP)
       ) hwloop_regs_i (
-          .clk         (clk),
-          .rst_n       (rst_n),
-          .scan_cg_en_i(scan_cg_en_i),
+          .clk  (clk),
+          .rst_n(rst_n),
 
           // from ID
           .hwlp_start_data_i(hwlp_start),
@@ -1634,9 +1633,33 @@ module cv32e40p_id_stage
     if (rst_n == 1'b0) begin
       alu_en_ex_o            <= '0;
       alu_operator_ex_o      <= ALU_SLTU;
+      alu_operand_a_ex_o     <= '0;
+      alu_operand_b_ex_o     <= '0;
+      alu_operand_c_ex_o     <= '0;
+      bmask_a_ex_o           <= '0;
+      bmask_b_ex_o           <= '0;
+      imm_vec_ext_ex_o       <= '0;
+      alu_vec_mode_ex_o      <= '0;
+      alu_clpx_shift_ex_o    <= 2'b0;
+      alu_is_clpx_ex_o       <= 1'b0;
+      alu_is_subrot_ex_o     <= 1'b0;
 
       mult_operator_ex_o     <= MUL_MAC32;
+      mult_operand_a_ex_o    <= '0;
+      mult_operand_b_ex_o    <= '0;
+      mult_operand_c_ex_o    <= '0;
       mult_en_ex_o           <= 1'b0;
+      mult_sel_subword_ex_o  <= 1'b0;
+      mult_signed_mode_ex_o  <= 2'b00;
+      mult_imm_ex_o          <= '0;
+
+      mult_dot_op_a_ex_o     <= '0;
+      mult_dot_op_b_ex_o     <= '0;
+      mult_dot_op_c_ex_o     <= '0;
+      mult_dot_signed_ex_o   <= '0;
+      mult_is_clpx_ex_o      <= 1'b0;
+      mult_clpx_shift_ex_o   <= 2'b0;
+      mult_clpx_img_ex_o     <= 1'b0;
 
       apu_en_ex_o            <= '0;
       apu_op_ex_o            <= '0;
@@ -1663,33 +1686,72 @@ module cv32e40p_id_stage
 
       data_misaligned_ex_o   <= 1'b0;
 
+      pc_ex_o                <= '0;
+
       branch_in_ex_o         <= 1'b0;
       branch_pred_ex         <= 1'b0;
 
     end else if (data_misaligned_i) begin
       // misaligned data access case
       if (ex_ready_i) begin  // misaligned access case, only unstall alu operands
-        // alu_operand_a_ex_o and alu_operand_b_ex_o are loaded by their gated registers below
+
+        // if we are using post increments, then we have to use the
+        // original value of the register for the second memory access
+        // => keep it stalled
+        if (prepost_useincr_ex_o == 1'b1) begin
+          alu_operand_a_ex_o <= operand_a_fw_id;
+        end
+
+        alu_operand_b_ex_o   <= 32'h4;
         regfile_alu_we_ex_o  <= 1'b0;
         prepost_useincr_ex_o <= 1'b1;
 
         data_misaligned_ex_o <= 1'b1;
       end
     end else if (mult_multicycle_i) begin
-      // mult_operand_c_ex_o is loaded by its gated register below
+      mult_operand_c_ex_o <= operand_c_fw_id;
     end else begin
       // normal pipeline unstall case
 
       if (id_valid_o) begin  // unstall the whole pipeline
         alu_en_ex_o <= alu_en;
         if (alu_en) begin
-          // The ALU operands are loaded by their gated registers below
-          alu_operator_ex_o <= alu_operator;
+          alu_operator_ex_o  <= alu_operator;
+          alu_operand_a_ex_o <= alu_operand_a;
+          if (alu_op_b_mux_sel == OP_B_REGB_OR_FWD && (alu_operator == ALU_CLIP || alu_operator == ALU_CLIPU)) begin
+            alu_operand_b_ex_o <= {1'b0, alu_operand_b[30:0]};
+          end else begin
+            alu_operand_b_ex_o <= alu_operand_b;
+          end
+          alu_operand_c_ex_o  <= alu_operand_c;
+          bmask_a_ex_o        <= bmask_a_id;
+          bmask_b_ex_o        <= bmask_b_id;
+          imm_vec_ext_ex_o    <= imm_vec_ext_id;
+          alu_vec_mode_ex_o   <= alu_vec_mode;
+          alu_is_clpx_ex_o    <= is_clpx;
+          alu_clpx_shift_ex_o <= instr[14:13];
+          alu_is_subrot_ex_o  <= is_subrot;
         end
 
         mult_en_ex_o <= mult_en;
-        if (mult_int_en || mult_dot_en) begin
-          mult_operator_ex_o <= mult_operator;
+        if (mult_int_en) begin
+          mult_operator_ex_o    <= mult_operator;
+          mult_sel_subword_ex_o <= mult_sel_subword;
+          mult_signed_mode_ex_o <= mult_signed_mode;
+          mult_operand_a_ex_o   <= alu_operand_a;
+          mult_operand_b_ex_o   <= alu_operand_b;
+          mult_operand_c_ex_o   <= alu_operand_c;
+          mult_imm_ex_o         <= mult_imm_id;
+        end
+        if (mult_dot_en) begin
+          mult_operator_ex_o   <= mult_operator;
+          mult_dot_signed_ex_o <= mult_dot_signed;
+          mult_dot_op_a_ex_o   <= alu_operand_a;
+          mult_dot_op_b_ex_o   <= alu_operand_b;
+          mult_dot_op_c_ex_o   <= alu_operand_c;
+          mult_is_clpx_ex_o    <= is_clpx;
+          mult_clpx_shift_ex_o <= instr[14:13];
+          mult_clpx_img_ex_o   <= instr[25];
         end
 
         // APU pipeline
@@ -1728,6 +1790,10 @@ module cv32e40p_id_stage
 
         data_misaligned_ex_o <= 1'b0;
 
+        if ((ctrl_transfer_insn_in_id == BRANCH_COND) || data_req_id) begin
+          pc_ex_o <= pc_id_i;
+        end
+
         branch_in_ex_o <= ctrl_transfer_insn_in_id == BRANCH_COND;
         branch_pred_ex <= (ctrl_transfer_insn_in_id == BRANCH_COND) && branch_pred_ctrl;
       end else if (ex_ready_i) begin
@@ -1763,173 +1829,6 @@ module cv32e40p_id_stage
         //Not doing it can overwrite the RF file with the currennt CSR value rather than the old one
         regfile_alu_we_ex_o <= 1'b0;
       end
-    end
-  end
-
-  // ALU operands: loaded by ALU instructions, a and b also by the second access of a misaligned
-  // load or store (a only with post-increment), so each group has its own clock gate.
-  logic alu_ex_we, alu_op_a_ex_we, alu_op_b_ex_we, pc_ex_we;
-  logic clk_alu_ex, clk_alu_op_a_ex, clk_alu_op_b_ex, clk_pc_ex;
-
-  assign alu_ex_we      = !data_misaligned_i && !mult_multicycle_i && id_valid_o && alu_en;
-  assign alu_op_a_ex_we = alu_ex_we || (data_misaligned_i && ex_ready_i && prepost_useincr_ex_o);
-  assign alu_op_b_ex_we = alu_ex_we || (data_misaligned_i && ex_ready_i);
-  assign pc_ex_we       = !data_misaligned_i && !mult_multicycle_i && id_valid_o &&
-                          ((ctrl_transfer_insn_in_id == BRANCH_COND) || data_req_id);
-
-  cv32e40p_clock_gate alu_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (alu_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_alu_ex)
-  );
-
-  cv32e40p_clock_gate alu_op_a_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (alu_op_a_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_alu_op_a_ex)
-  );
-
-  cv32e40p_clock_gate alu_op_b_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (alu_op_b_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_alu_op_b_ex)
-  );
-
-  cv32e40p_clock_gate pc_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (pc_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_pc_ex)
-  );
-
-  // With post-increment the second access of a misaligned one uses the original register value
-  always_ff @(posedge clk_alu_op_a_ex, negedge rst_n) begin : ID_EX_ALU_OP_A_REGISTER
-    if (rst_n == 1'b0) begin
-      alu_operand_a_ex_o <= '0;
-    end else begin
-      alu_operand_a_ex_o <= data_misaligned_i ? operand_a_fw_id : alu_operand_a;
-    end
-  end
-
-  always_ff @(posedge clk_alu_op_b_ex, negedge rst_n) begin : ID_EX_ALU_OP_B_REGISTER
-    if (rst_n == 1'b0) begin
-      alu_operand_b_ex_o <= '0;
-    end else if (data_misaligned_i) begin
-      alu_operand_b_ex_o <= 32'h4;
-    end else if (alu_op_b_mux_sel == OP_B_REGB_OR_FWD &&
-                 (alu_operator == ALU_CLIP || alu_operator == ALU_CLIPU)) begin
-      alu_operand_b_ex_o <= {1'b0, alu_operand_b[30:0]};
-    end else begin
-      alu_operand_b_ex_o <= alu_operand_b;
-    end
-  end
-
-  always_ff @(posedge clk_alu_ex, negedge rst_n) begin : ID_EX_ALU_REGISTERS
-    if (rst_n == 1'b0) begin
-      alu_operand_c_ex_o  <= '0;
-      bmask_a_ex_o        <= '0;
-      bmask_b_ex_o        <= '0;
-      imm_vec_ext_ex_o    <= '0;
-      alu_vec_mode_ex_o   <= '0;
-      alu_clpx_shift_ex_o <= 2'b0;
-      alu_is_clpx_ex_o    <= 1'b0;
-      alu_is_subrot_ex_o  <= 1'b0;
-    end else begin
-      alu_operand_c_ex_o  <= alu_operand_c;
-      bmask_a_ex_o        <= bmask_a_id;
-      bmask_b_ex_o        <= bmask_b_id;
-      imm_vec_ext_ex_o    <= imm_vec_ext_id;
-      alu_vec_mode_ex_o   <= alu_vec_mode;
-      alu_is_clpx_ex_o    <= is_clpx;
-      alu_clpx_shift_ex_o <= instr[14:13];
-      alu_is_subrot_ex_o  <= is_subrot;
-    end
-  end
-
-  // PC of a conditional branch or of a load/store in EX
-  always_ff @(posedge clk_pc_ex, negedge rst_n) begin : ID_EX_PC_REGISTER
-    if (rst_n == 1'b0) begin
-      pc_ex_o <= '0;
-    end else begin
-      pc_ex_o <= pc_id_i;
-    end
-  end
-
-  // Multiplier and dot-product operands: wide registers loaded only by their own instructions
-  // (and operand c by a multicycle multiplication), so each group has its own clock gate.
-  logic mult_int_ex_we, mult_dot_ex_we, mult_c_ex_we;
-  logic clk_mult_int_ex, clk_mult_dot_ex, clk_mult_c_ex;
-
-  assign mult_int_ex_we = !data_misaligned_i && !mult_multicycle_i && id_valid_o && mult_int_en;
-  assign mult_dot_ex_we = !data_misaligned_i && !mult_multicycle_i && id_valid_o && mult_dot_en;
-  assign mult_c_ex_we   = !data_misaligned_i && (mult_multicycle_i || (id_valid_o && mult_int_en));
-
-  cv32e40p_clock_gate mult_int_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (mult_int_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_mult_int_ex)
-  );
-
-  cv32e40p_clock_gate mult_dot_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (mult_dot_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_mult_dot_ex)
-  );
-
-  cv32e40p_clock_gate mult_c_ex_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (mult_c_ex_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_mult_c_ex)
-  );
-
-  always_ff @(posedge clk_mult_int_ex, negedge rst_n) begin : ID_EX_MULT_INT_REGISTERS
-    if (rst_n == 1'b0) begin
-      mult_operand_a_ex_o   <= '0;
-      mult_operand_b_ex_o   <= '0;
-      mult_sel_subword_ex_o <= 1'b0;
-      mult_signed_mode_ex_o <= 2'b00;
-      mult_imm_ex_o         <= '0;
-    end else begin
-      mult_operand_a_ex_o   <= alu_operand_a;
-      mult_operand_b_ex_o   <= alu_operand_b;
-      mult_sel_subword_ex_o <= mult_sel_subword;
-      mult_signed_mode_ex_o <= mult_signed_mode;
-      mult_imm_ex_o         <= mult_imm_id;
-    end
-  end
-
-  // A multicycle multiplication keeps its partial result in operand c
-  always_ff @(posedge clk_mult_c_ex, negedge rst_n) begin : ID_EX_MULT_C_REGISTER
-    if (rst_n == 1'b0) begin
-      mult_operand_c_ex_o <= '0;
-    end else begin
-      mult_operand_c_ex_o <= mult_multicycle_i ? operand_c_fw_id : alu_operand_c;
-    end
-  end
-
-  always_ff @(posedge clk_mult_dot_ex, negedge rst_n) begin : ID_EX_MULT_DOT_REGISTERS
-    if (rst_n == 1'b0) begin
-      mult_dot_op_a_ex_o   <= '0;
-      mult_dot_op_b_ex_o   <= '0;
-      mult_dot_op_c_ex_o   <= '0;
-      mult_dot_signed_ex_o <= '0;
-      mult_is_clpx_ex_o    <= 1'b0;
-      mult_clpx_shift_ex_o <= 2'b0;
-      mult_clpx_img_ex_o   <= 1'b0;
-    end else begin
-      mult_dot_op_a_ex_o   <= alu_operand_a;
-      mult_dot_op_b_ex_o   <= alu_operand_b;
-      mult_dot_op_c_ex_o   <= alu_operand_c;
-      mult_dot_signed_ex_o <= mult_dot_signed;
-      mult_is_clpx_ex_o    <= is_clpx;
-      mult_clpx_shift_ex_o <= instr[14:13];
-      mult_clpx_img_ex_o   <= instr[25];
     end
   end
 

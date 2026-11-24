@@ -40,7 +40,6 @@ module cv32e40p_obi_interface #(
 ) (
     input logic clk,
     input logic rst_n,
-    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // Transaction request interface
     input logic trans_valid_i,
@@ -177,36 +176,22 @@ module cv32e40p_obi_interface #(
 
       always_ff @(posedge clk, negedge rst_n) begin
         if (rst_n == 1'b0) begin
-          state_q <= TRANSPARENT;
-        end else begin
-          state_q <= next_state;
-        end
-      end
-
-      // The hold registers load only when a request is not granted at once
-      logic clk_hold;
-
-      cv32e40p_clock_gate hold_clock_gate_i (
-          .clk_i       (clk),
-          .en_i        ((state_q == TRANSPARENT) && (next_state == REGISTERED)),
-          .scan_cg_en_i(scan_cg_en_i),
-          .clk_o       (clk_hold)
-      );
-
-      always_ff @(posedge clk_hold, negedge rst_n) begin
-        if (rst_n == 1'b0) begin
+          state_q     <= TRANSPARENT;
           obi_addr_q  <= 32'b0;
           obi_we_q    <= 1'b0;
           obi_be_q    <= 4'b0;
           obi_wdata_q <= 32'b0;
           obi_atop_q  <= 6'b0;
         end else begin
-          // Keep OBI A channel signals stable throughout REGISTERED state
-          obi_addr_q  <= obi_addr_o;
-          obi_we_q    <= obi_we_o;
-          obi_be_q    <= obi_be_o;
-          obi_wdata_q <= obi_wdata_o;
-          obi_atop_q  <= obi_atop_o;
+          state_q <= next_state;
+          if ((state_q == TRANSPARENT) && (next_state == REGISTERED)) begin
+            // Keep OBI A channel signals stable throughout REGISTERED state
+            obi_addr_q  <= obi_addr_o;
+            obi_we_q    <= obi_we_o;
+            obi_be_q    <= obi_be_o;
+            obi_wdata_q <= obi_wdata_o;
+            obi_atop_q  <= obi_atop_o;
+          end
         end
       end
 

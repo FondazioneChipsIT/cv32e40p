@@ -28,7 +28,6 @@ module cv32e40p_load_store_unit #(
 ) (
     input logic clk,
     input logic rst_n,
-    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // output to data memory
     output logic data_req_o,
@@ -297,27 +296,19 @@ module cv32e40p_load_store_unit #(
     endcase  //~case(rdata_type_q)
   end
 
-  // rdata_q loads only on a load response
-  logic clk_rdata;
-
-  cv32e40p_clock_gate rdata_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (resp_valid && (~data_we_q)),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_rdata)
-  );
-
-  always_ff @(posedge clk_rdata, negedge rst_n) begin
+  always_ff @(posedge clk, negedge rst_n) begin
     if (rst_n == 1'b0) begin
       rdata_q <= '0;
     end else begin
-      // if we have detected a misaligned access, and we are
-      // currently doing the first part of this access, then
-      // store the data coming from memory in rdata_q.
-      // In all other cases, rdata_q gets the value that we are
-      // writing to the register file
-      if ((data_misaligned_ex_i == 1'b1) || (data_misaligned_o == 1'b1)) rdata_q <= resp_rdata;
-      else rdata_q <= data_rdata_ext;
+      if (resp_valid && (~data_we_q)) begin
+        // if we have detected a misaligned access, and we are
+        // currently doing the first part of this access, then
+        // store the data coming from memory in rdata_q.
+        // In all other cases, rdata_q gets the value that we are
+        // writing to the register file
+        if ((data_misaligned_ex_i == 1'b1) || (data_misaligned_o == 1'b1)) rdata_q <= resp_rdata;
+        else rdata_q <= data_rdata_ext;
+      end
     end
   end
 
@@ -464,9 +455,8 @@ module cv32e40p_load_store_unit #(
   cv32e40p_obi_interface #(
       .TRANS_STABLE(1)
   ) data_obi_i (
-      .clk         (clk),
-      .rst_n       (rst_n),
-      .scan_cg_en_i(1'b0),  // TRANS_STABLE = 1: no hold registers, no clock gate
+      .clk  (clk),
+      .rst_n(rst_n),
 
       .trans_valid_i(trans_valid),
       .trans_ready_o(trans_ready),
