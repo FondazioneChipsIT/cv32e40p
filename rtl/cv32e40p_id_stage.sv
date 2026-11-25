@@ -480,6 +480,7 @@ module cv32e40p_id_stage
   logic [31:0] alu_operand_a;
   logic [31:0] alu_operand_b;
   logic [31:0] alu_operand_c;
+  logic        alu_op_c_used;  // EX reads operand c of the instruction in ID
   logic        alu_operand_a_fw_ex;
   logic        alu_operand_b_fw_ex;
   logic        alu_operand_c_fw_ex;
@@ -873,6 +874,12 @@ module cv32e40p_id_stage
     endcase  // case (alu_op_c_mux_sel)
   end
 
+
+  // Operand c is the target of a branch, the data of a store or a source of these ALU
+  // operators; for any other instruction the ID/EX register keeps its value
+  assign alu_op_c_used = (alu_op_c_mux_sel != OP_C_REGC_OR_FWD) || data_we_id ||
+      (alu_operator inside {ALU_SHUF, ALU_SHUF2, ALU_PCKLO, ALU_PCKHI, ALU_EXT, ALU_EXTS, ALU_INS,
+                            ALU_BINS});
 
   // scalar replication for operand C and shuffle type
   always_comb begin
@@ -1723,7 +1730,9 @@ module cv32e40p_id_stage
           end else begin
             alu_operand_b_ex_o <= alu_operand_b;
           end
-          alu_operand_c_ex_o  <= alu_operand_c;
+          if (alu_op_c_used) begin
+            alu_operand_c_ex_o <= alu_operand_c;
+          end
           bmask_a_ex_o        <= bmask_a_id;
           bmask_b_ex_o        <= bmask_b_id;
           imm_vec_ext_ex_o    <= imm_vec_ext_id;
