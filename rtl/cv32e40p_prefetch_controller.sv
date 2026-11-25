@@ -58,6 +58,7 @@ module cv32e40p_prefetch_controller #(
 
     // Predicted taken branch: fetch pred_target_i after the instruction that ends in the head word
     input  logic        pred_jump_i,
+    input  logic        pred_flush_i,  // as pred_jump_i, flushing every fetched word
     input  logic [31:0] pred_target_i,
     output logic        pred_ok_o,  // the head word is requested and no other redirect is pending
 
@@ -114,6 +115,8 @@ module cv32e40p_prefetch_controller #(
   // Jump after the head word (hardware loop end or predicted taken branch)
   logic        jump_next;
   logic [31:0] jump_next_addr;
+  // Jump that keeps no fetched word (taken branch, or predicted one held in the aligner)
+  logic        flush_all;
 
   //////////////////////////////////////////////////////////////////////////////
   // Prefetch buffer status
@@ -129,7 +132,7 @@ module cv32e40p_prefetch_controller #(
   // Fectch valid control. Fetch never valid if jumping or flushing responses.
   // Fetch valid if there are instructions in FIFO or there is an incoming
   // instruction from memory.
-  assign fetch_valid_o = (fifo_valid || resp_valid_i) && !(branch_i || (flush_cnt_q > 0));
+  assign fetch_valid_o = (fifo_valid || resp_valid_i) && !(flush_all || (flush_cnt_q > 0));
 
   //////////////////////////////////////////////////////////////////////////////
   // Transaction request generation
@@ -142,7 +145,9 @@ module cv32e40p_prefetch_controller #(
 
   // The controller and the IF stage never request both jumps in the same cycle
   assign jump_next      = hwlp_jump_i || pred_jump_i;
-  assign jump_next_addr = pred_jump_i ? {pred_target_i[31:2], 2'b00} : hwlp_target_i;
+  assign jump_next_addr = (pred_jump_i || pred_flush_i) ? {pred_target_i[31:2], 2'b00} :
+                                                          hwlp_target_i;
+  assign flush_all      = branch_i || pred_flush_i;
 
   // A jump after the head word needs that word requested and no flush or redirect in progress
   assign pred_ok_o = (state_q == IDLE) && (flush_cnt_q == '0) && !hwlp_flush_after_resp &&
@@ -175,7 +180,7 @@ module cv32e40p_prefetch_controller #(
   // there is surely space for a new request.
   // Masking fifo_cnt in this case allows for making a new request when the FIFO
   // is not empty and we are jumping, and (fifo_cnt_i + cnt_q == DEPTH)
-  assign fifo_cnt_masked = (branch_i || jump_next) ? '0 : fifo_cnt_i;
+  assign fifo_cnt_masked = (flush_all || jump_next) ? '0 : fifo_cnt_i;
 
   // FSM (state_q, next_state) to control OBI A channel signals.
   always_comb begin
@@ -190,13 +195,13 @@ module cv32e40p_prefetch_controller #(
             // Jumps must have the highest priority (e.g. an interrupt must
             // have higher priority than a HW-loop branch)
             trans_addr_o = aligned_branch_addr;
-          end else if (jump_next) begin
+          end else if (jump_next || pred_flush_i) begin
             trans_addr_o = jump_next_addr;
           end else begin
             trans_addr_o = trans_addr_incr;
           end
         end
-        if ((branch_i || jump_next) && !(trans_valid_o && trans_ready_i)) begin
+        if ((flush_all || jump_next) && !(trans_valid_o && trans_ready_i)) begin
           // Taken branch, but transaction not yet accepted by bus interface adapter.
           next_state = BRANCH_WAIT;
         end
@@ -225,7 +230,7 @@ module cv32e40p_prefetch_controller #(
   // until the flush count is 0 again. (The flush count is initialized with the
   // number of outstanding transactions at the time of the branch).
   assign fifo_valid = !fifo_empty_i;
-  assign fifo_push_o = resp_valid_i && (fifo_valid || !fetch_ready_i) && !(branch_i || (flush_cnt_q > 0));
+  assign fifo_push_o = resp_valid_i && (fifo_valid || !fetch_ready_i) && !(flush_all || (flush_cnt_q > 0));
   assign fifo_pop_o = fifo_valid && fetch_ready_i;
 
   //////////////////////////////////////////////////////////////////////////////
@@ -265,8 +270,8 @@ module cv32e40p_prefetch_controller #(
   // If HWLP_END is not going to ID, save it from the flush.
   // Don't flush the FIFO if it is empty (maybe we must accept
   // HWLP_end from the memory in this cycle)
-  assign fifo_flush_o           = branch_i || (jump_next && !fifo_empty_i && fifo_pop_o);
-  assign fifo_flush_but_first_o = (jump_next && !fifo_empty_i && !fifo_pop_o && !branch_i);
+  assign fifo_flush_o           = flush_all || (jump_next && !fifo_empty_i && fifo_pop_o);
+  assign fifo_flush_but_first_o = (jump_next && !fifo_empty_i && !fifo_pop_o && !flush_all);
 
   //////////////////////////////////////////////////////////////////////////////
   // HWLP main resp flush controller
@@ -290,7 +295,7 @@ module cv32e40p_prefetch_controller #(
       hwlp_flush_after_resp    <= 1'b0;
       hwlp_flush_cnt_delayed_q <= 2'b00;
     end else begin
-      if (branch_i) begin
+      if (flush_all) begin
         // Reset the flush request if an interrupt is taken
         hwlp_flush_after_resp    <= 1'b0;
         hwlp_flush_cnt_delayed_q <= 2'b00;
@@ -326,7 +331,7 @@ module cv32e40p_prefetch_controller #(
     // Number of outstanding transfers at time of branch equals the number of
     // responses that will need to be flushed (responses already in the FIFO will
     // be flushed there)
-    if (branch_i || hwlp_flush_resp) begin
+    if (flush_all || hwlp_flush_resp) begin
       next_flush_cnt = cnt_q;
       if (resp_valid_i && (cnt_q > 0)) begin
         next_flush_cnt = cnt_q - 1'b1;
@@ -355,7 +360,7 @@ module cv32e40p_prefetch_controller #(
       state_q     <= next_state;
       cnt_q       <= next_cnt;
       flush_cnt_q <= next_flush_cnt;
-      if (branch_i || jump_next || (trans_valid_o && trans_ready_i)) begin
+      if (flush_all || jump_next || (trans_valid_o && trans_ready_i)) begin
         trans_addr_q <= trans_addr_o;
       end
     end

@@ -39,6 +39,7 @@ module cv32e40p_prefetch_buffer #(
     input logic [31:0] hwlp_target_i,
 
     input  logic        pred_jump_i,
+    input  logic        pred_flush_i,
     input  logic [31:0] pred_target_i,
     output logic        pred_ok_o,
 
@@ -104,6 +105,7 @@ module cv32e40p_prefetch_buffer #(
       .hwlp_target_i(hwlp_target_i),
 
       .pred_jump_i  (pred_jump_i),
+      .pred_flush_i (pred_flush_i),
       .pred_target_i(pred_target_i),
       .pred_ok_o    (pred_ok_o),
 

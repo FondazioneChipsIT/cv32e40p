@@ -161,6 +161,9 @@ module cv32e40p_if_stage #(
   logic                      pred_pending_q;  // pred_jump done, its instruction not yet in ID
   logic                      pred_ok_fetch;
   logic                      pred_ok_align;
+  logic                      pred_ok_held;  // the instruction at pc_if is held whole in the aligner
+  logic                      pred_flush;  // fetch the BTB target now, dropping the sequential words
+  logic                      pred_flush_q;  // pred_flush done, its instruction not yet in ID
 
 
   // exception PC selection mux
@@ -229,6 +232,7 @@ module cv32e40p_if_stage #(
       .hwlp_target_i(hwlp_target_i),
 
       .pred_jump_i  (pred_jump),
+      .pred_flush_i (pred_flush),
       .pred_target_i(pred_target),
       .pred_ok_o    (pred_ok_fetch),
 
@@ -265,7 +269,7 @@ module cv32e40p_if_stage #(
   end
 
   assign if_busy_o    = prefetch_busy;
-  assign perf_imiss_o = !fetch_valid && !branch_req;
+  assign perf_imiss_o = !(fetch_valid || pred_flush || pred_flush_q) && !branch_req;
 
 
   //////////////////////////////////////////////////////////////////////////////
@@ -283,6 +287,11 @@ module cv32e40p_if_stage #(
   // A pc_set in the same cycle wins in the prefetcher and in the aligner
   assign pred_jump = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i) && pred_en_i &&
                      pred_ok_align && pred_ok_fetch;
+
+  // A 16-bit instruction held whole in the aligner needs no further word: its target is
+  // fetched at once, all sequential words are dropped, and it leaves IF without a fetched word
+  assign pred_flush = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i) && pred_en_i &&
+                      pred_ok_held && pred_ok_fetch;
 
   // The entry read by a pending redirect does not change until its instruction is in ID
   assign btb_waddr = pc_id_o[BTB_ADDR_WIDTH:1];
@@ -314,17 +323,20 @@ module cv32e40p_if_stage #(
   always_ff @(posedge clk, negedge rst_n) begin : pred_pipe
     if (rst_n == 1'b0) begin
       pred_pending_q  <= 1'b0;
+      pred_flush_q    <= 1'b0;
       pred_taken_id_o <= 1'b0;
       pred_imm_id_o   <= '0;
     end else begin
       if (branch_req || (if_valid && instr_valid)) begin
         pred_pending_q <= 1'b0;
-      end else if (pred_jump) begin
+        pred_flush_q   <= 1'b0;
+      end else if (pred_jump || pred_flush) begin
         pred_pending_q <= 1'b1;
+        pred_flush_q   <= pred_flush;
       end
       if (if_valid && instr_valid) begin
-        pred_taken_id_o <= pred_jump || pred_pending_q;
-        if (pred_jump || pred_pending_q) begin
+        pred_taken_id_o <= pred_jump || pred_flush || pred_pending_q;
+        if (pred_jump || pred_flush || pred_pending_q) begin
           pred_imm_id_o <= btb_imm;
         end
       end
@@ -356,7 +368,7 @@ module cv32e40p_if_stage #(
     end
   end
 
-  assign if_ready = fetch_valid & id_ready_i;
+  assign if_ready = (fetch_valid || ((pred_flush || pred_flush_q) && !branch_req)) & id_ready_i;
   assign if_valid = (~halt_if_i) & if_ready;
 
   cv32e40p_aligner aligner_i (
@@ -370,9 +382,11 @@ module cv32e40p_if_stage #(
       .instr_valid_o   (instr_valid),
       .branch_addr_i   ({branch_addr_n[31:1], 1'b0}),
       .branch_i        (branch_req),
-      .hwlp_addr_i     (pred_jump ? pred_target : hwlp_target_i),
-      .hwlp_update_pc_i(hwlp_jump_i || pred_jump),
+      .hwlp_addr_i     ((pred_jump || pred_flush) ? pred_target : hwlp_target_i),
+      .hwlp_update_pc_i(hwlp_jump_i || pred_jump || pred_flush),
+      .pred_flush_i    (pred_flush || pred_flush_q),
       .pred_ok_o       (pred_ok_align),
+      .pred_ok_held_o  (pred_ok_held),
       .pc_o            (pc_if_o)
   );
 
