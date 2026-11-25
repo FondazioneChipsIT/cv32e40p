@@ -138,8 +138,8 @@ module cv32e40p_if_stage #(
 
   // Branch target buffer: offset of a taken branch, indexed by pc[BTB_ADDR_WIDTH:1]
   localparam int BTB_ADDR_WIDTH = 4;
-  localparam int BTB_TAG_WIDTH = 8;
-  localparam int BTB_OFFSET_WIDTH = 12;  // offset [BTB_OFFSET_WIDTH:1]; longer ones are not stored
+  localparam int BTB_TAG_WIDTH = 6;
+  localparam int BTB_OFFSET_WIDTH = 8;  // offset [BTB_OFFSET_WIDTH:1]; longer ones are not stored
 
   logic                      btb_valid_q       [2**BTB_ADDR_WIDTH];
   logic                      btb_jal_q         [2**BTB_ADDR_WIDTH];
@@ -160,6 +160,7 @@ module cv32e40p_if_stage #(
   logic                      pred_pending_q;  // pred_jump done, its instruction not yet in ID
   logic                      pred_ok_fetch;
   logic                      pred_ok_align;
+  logic [BTB_OFFSET_WIDTH-1:0] pred_imm_q;  // BTB offset of the instruction in ID
 
 
   // exception PC selection mux
@@ -314,7 +315,7 @@ module cv32e40p_if_stage #(
     if (rst_n == 1'b0) begin
       pred_pending_q  <= 1'b0;
       pred_taken_id_o <= 1'b0;
-      pred_imm_id_o   <= '0;
+      pred_imm_q      <= '0;
     end else begin
       if (branch_req || (if_valid && instr_valid)) begin
         pred_pending_q <= 1'b0;
@@ -324,11 +325,13 @@ module cv32e40p_if_stage #(
       if (if_valid && instr_valid) begin
         pred_taken_id_o <= pred_jump || pred_pending_q;
         if (pred_jump || pred_pending_q) begin
-          pred_imm_id_o <= btb_imm;
+          pred_imm_q <= btb_imm[BTB_OFFSET_WIDTH-1:0];
         end
       end
     end
   end
+
+  assign pred_imm_id_o = 12'($signed(pred_imm_q));
 
   // IF-ID pipeline registers, frozen when the ID stage is stalled
   always_ff @(posedge clk, negedge rst_n) begin : IF_ID_PIPE_REGISTERS
