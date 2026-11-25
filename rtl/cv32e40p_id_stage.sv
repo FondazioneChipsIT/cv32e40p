@@ -466,31 +466,14 @@ module cv32e40p_id_stage
   logic        [      31:0] operand_a_fw_id;
   logic        [      31:0] operand_b_fw_id;
   logic        [      31:0] operand_c_fw_id;
-  // Forwarding from EX (the latest input of ID) and the operands without it
-  logic                     operand_a_fw_ex;
-  logic                     operand_b_fw_ex;
-  logic                     operand_c_fw_ex;
-  logic        [      31:0] operand_a_rfwb_id;
-  logic        [      31:0] operand_b_rfwb_id;
-  logic        [      31:0] operand_c_rfwb_id;
 
   logic [31:0] operand_b, operand_b_vec;
   logic [31:0] operand_c, operand_c_vec;
-  logic [31:0] operand_b_fw, operand_b_fw_vec;
-  logic [31:0] operand_c_fw_vec;
 
   logic [31:0] alu_operand_a;
   logic [31:0] alu_operand_b;
   logic [31:0] alu_operand_c;
   logic        alu_op_c_used;  // EX reads operand c of the instruction in ID
-  logic        alu_operand_a_fw_ex;
-  logic        alu_operand_b_fw_ex;
-  logic        alu_operand_c_fw_ex;
-  logic [31:0] alu_operand_a_rfwb;
-  logic [31:0] alu_operand_b_rfwb;
-  logic [31:0] alu_operand_b_fw;
-  logic [31:0] alu_operand_c_rfwb;
-  logic [31:0] alu_operand_c_fw;
 
   // Immediates for ID
   logic [ 0:0] bmask_a_mux;
@@ -702,39 +685,18 @@ module cv32e40p_id_stage
   //       |_|                                          //
   ////////////////////////////////////////////////////////
 
-  // ALU_Op_a Mux, without the forwarding from EX
+  // ALU_Op_a Mux
   always_comb begin : alu_operand_a_mux
     case (alu_op_a_mux_sel)
-      OP_A_REGA_OR_FWD: begin
-        alu_operand_a_rfwb  = operand_a_rfwb_id;
-        alu_operand_a_fw_ex = operand_a_fw_ex;
-      end
-      OP_A_REGB_OR_FWD: begin
-        alu_operand_a_rfwb  = operand_b_rfwb_id;
-        alu_operand_a_fw_ex = operand_b_fw_ex;
-      end
-      OP_A_REGC_OR_FWD: begin
-        alu_operand_a_rfwb  = operand_c_rfwb_id;
-        alu_operand_a_fw_ex = operand_c_fw_ex;
-      end
-      OP_A_CURRPC: begin
-        alu_operand_a_rfwb  = pc_id_i;
-        alu_operand_a_fw_ex = 1'b0;
-      end
-      OP_A_IMM: begin
-        alu_operand_a_rfwb  = imm_a;
-        alu_operand_a_fw_ex = 1'b0;
-      end
-      default: begin
-        alu_operand_a_rfwb  = operand_a_rfwb_id;
-        alu_operand_a_fw_ex = operand_a_fw_ex;
-      end
+      OP_A_REGA_OR_FWD: alu_operand_a = operand_a_fw_id;
+      OP_A_REGB_OR_FWD: alu_operand_a = operand_b_fw_id;
+      OP_A_REGC_OR_FWD: alu_operand_a = operand_c_fw_id;
+      OP_A_CURRPC:      alu_operand_a = pc_id_i;
+      OP_A_IMM:         alu_operand_a = imm_a;
+      default:          alu_operand_a = operand_a_fw_id;
     endcase
     ;  // case (alu_op_a_mux_sel)
   end
-
-  // The result forwarded from EX enters last: it arrives after every select of the muxes above
-  assign alu_operand_a = alu_operand_a_fw_ex ? regfile_alu_wdata_fw_i : alu_operand_a_rfwb;
 
   always_comb begin : immediate_a_mux
     unique case (imm_a_mux_sel)
@@ -746,14 +708,13 @@ module cv32e40p_id_stage
   // Operand a forwarding mux
   always_comb begin : operand_a_fw_mux
     case (operand_a_fw_mux_sel)
-      SEL_FW_WB: operand_a_rfwb_id = regfile_wdata_wb_i;
-      default:   operand_a_rfwb_id = regfile_data_ra_id;
+      SEL_FW_EX:   operand_a_fw_id = regfile_alu_wdata_fw_i;
+      SEL_FW_WB:   operand_a_fw_id = regfile_wdata_wb_i;
+      SEL_REGFILE: operand_a_fw_id = regfile_data_ra_id;
+      default:     operand_a_fw_id = regfile_data_ra_id;
     endcase
     ;  // case (operand_a_fw_mux_sel)
   end
-
-  assign operand_a_fw_ex = (operand_a_fw_mux_sel == SEL_FW_EX);
-  assign operand_a_fw_id = operand_a_fw_ex ? regfile_alu_wdata_fw_i : operand_a_rfwb_id;
 
   //////////////////////////////////////////////////////
   //   ___                                 _   ____   //
@@ -782,72 +743,44 @@ module cv32e40p_id_stage
     endcase
   end
 
-  // ALU_Op_b Mux, without the forwarding from EX
+  // ALU_Op_b Mux
   always_comb begin : alu_operand_b_mux
     case (alu_op_b_mux_sel)
-      OP_B_REGA_OR_FWD: begin
-        operand_b           = operand_a_rfwb_id;
-        alu_operand_b_fw_ex = operand_a_fw_ex;
-      end
-      OP_B_REGB_OR_FWD: begin
-        operand_b           = operand_b_rfwb_id;
-        alu_operand_b_fw_ex = operand_b_fw_ex;
-      end
-      OP_B_REGC_OR_FWD: begin
-        operand_b           = operand_c_rfwb_id;
-        alu_operand_b_fw_ex = operand_c_fw_ex;
-      end
-      OP_B_IMM: begin
-        operand_b           = imm_b;
-        alu_operand_b_fw_ex = 1'b0;
-      end
-      OP_B_BMASK: begin
-        operand_b           = $unsigned(operand_b_rfwb_id[4:0]);
-        alu_operand_b_fw_ex = operand_b_fw_ex;
-      end
-      default: begin
-        operand_b           = operand_b_rfwb_id;
-        alu_operand_b_fw_ex = operand_b_fw_ex;
-      end
+      OP_B_REGA_OR_FWD: operand_b = operand_a_fw_id;
+      OP_B_REGB_OR_FWD: operand_b = operand_b_fw_id;
+      OP_B_REGC_OR_FWD: operand_b = operand_c_fw_id;
+      OP_B_IMM:         operand_b = imm_b;
+      OP_B_BMASK:       operand_b = $unsigned(operand_b_fw_id[4:0]);
+      default:          operand_b = operand_b_fw_id;
     endcase  // case (alu_op_b_mux_sel)
   end
 
-  // The result forwarded from EX, as the mux above gives it
-  assign operand_b_fw = (alu_op_b_mux_sel == OP_B_BMASK) ? $unsigned(regfile_alu_wdata_fw_i[4:0]) :
-                                                           regfile_alu_wdata_fw_i;
 
   // scalar replication for operand B and shuffle type
   always_comb begin
     if (alu_vec_mode == VEC_MODE8) begin
       operand_b_vec    = {4{operand_b[7:0]}};
-      operand_b_fw_vec = {4{operand_b_fw[7:0]}};
       imm_shuffle_type = imm_shuffleb_type;
     end else begin
       operand_b_vec    = {2{operand_b[15:0]}};
-      operand_b_fw_vec = {2{operand_b_fw[15:0]}};
       imm_shuffle_type = imm_shuffleh_type;
     end
   end
 
   // choose normal or scalar replicated version of operand b
-  assign alu_operand_b_rfwb = (scalar_replication == 1'b1) ? operand_b_vec : operand_b;
-  assign alu_operand_b_fw   = (scalar_replication == 1'b1) ? operand_b_fw_vec : operand_b_fw;
-
-  // The result forwarded from EX enters last: it arrives after every select of the muxes above
-  assign alu_operand_b      = alu_operand_b_fw_ex ? alu_operand_b_fw : alu_operand_b_rfwb;
+  assign alu_operand_b = (scalar_replication == 1'b1) ? operand_b_vec : operand_b;
 
 
   // Operand b forwarding mux
   always_comb begin : operand_b_fw_mux
     case (operand_b_fw_mux_sel)
-      SEL_FW_WB: operand_b_rfwb_id = regfile_wdata_wb_i;
-      default:   operand_b_rfwb_id = regfile_data_rb_id;
+      SEL_FW_EX:   operand_b_fw_id = regfile_alu_wdata_fw_i;
+      SEL_FW_WB:   operand_b_fw_id = regfile_wdata_wb_i;
+      SEL_REGFILE: operand_b_fw_id = regfile_data_rb_id;
+      default:     operand_b_fw_id = regfile_data_rb_id;
     endcase
     ;  // case (operand_b_fw_mux_sel)
   end
-
-  assign operand_b_fw_ex = (operand_b_fw_mux_sel == SEL_FW_EX);
-  assign operand_b_fw_id = operand_b_fw_ex ? regfile_alu_wdata_fw_i : operand_b_rfwb_id;
 
 
   //////////////////////////////////////////////////////
@@ -859,26 +792,14 @@ module cv32e40p_id_stage
   //       |_|                                        //
   //////////////////////////////////////////////////////
 
-  // ALU OP C Mux, without the forwarding from EX
+  // ALU OP C Mux
   always_comb begin : alu_operand_c_mux
     case (alu_op_c_mux_sel)
-      OP_C_REGC_OR_FWD: begin
-        operand_c           = operand_c_rfwb_id;
-        alu_operand_c_fw_ex = operand_c_fw_ex;
-      end
-      OP_C_REGB_OR_FWD: begin
-        operand_c           = operand_b_rfwb_id;
-        alu_operand_c_fw_ex = operand_b_fw_ex;
-      end
+      OP_C_REGC_OR_FWD: operand_c = operand_c_fw_id;
+      OP_C_REGB_OR_FWD: operand_c = operand_b_fw_id;
       // A branch predicted taken carries the address it resumes at if not taken
-      OP_C_JT: begin
-        operand_c           = branch_pred_ctrl ? pc_next_id : jump_target;
-        alu_operand_c_fw_ex = 1'b0;
-      end
-      default: begin
-        operand_c           = operand_c_rfwb_id;
-        alu_operand_c_fw_ex = operand_c_fw_ex;
-      end
+      OP_C_JT:          operand_c = branch_pred_ctrl ? pc_next_id : jump_target;
+      default:          operand_c = operand_c_fw_id;
     endcase  // case (alu_op_c_mux_sel)
   end
 
@@ -892,34 +813,26 @@ module cv32e40p_id_stage
   // scalar replication for operand C and shuffle type
   always_comb begin
     if (alu_vec_mode == VEC_MODE8) begin
-      operand_c_vec    = {4{operand_c[7:0]}};
-      operand_c_fw_vec = {4{regfile_alu_wdata_fw_i[7:0]}};
+      operand_c_vec = {4{operand_c[7:0]}};
     end else begin
-      operand_c_vec    = {2{operand_c[15:0]}};
-      operand_c_fw_vec = {2{regfile_alu_wdata_fw_i[15:0]}};
+      operand_c_vec = {2{operand_c[15:0]}};
     end
   end
 
   // choose normal or scalar replicated version of operand b
-  assign alu_operand_c_rfwb = (scalar_replication_c == 1'b1) ? operand_c_vec : operand_c;
-  assign alu_operand_c_fw   = (scalar_replication_c == 1'b1) ? operand_c_fw_vec :
-                                                               regfile_alu_wdata_fw_i;
-
-  // The result forwarded from EX enters last: it arrives after every select of the muxes above
-  assign alu_operand_c      = alu_operand_c_fw_ex ? alu_operand_c_fw : alu_operand_c_rfwb;
+  assign alu_operand_c = (scalar_replication_c == 1'b1) ? operand_c_vec : operand_c;
 
 
   // Operand c forwarding mux
   always_comb begin : operand_c_fw_mux
     case (operand_c_fw_mux_sel)
-      SEL_FW_WB: operand_c_rfwb_id = regfile_wdata_wb_i;
-      default:   operand_c_rfwb_id = regfile_data_rc_id;
+      SEL_FW_EX:   operand_c_fw_id = regfile_alu_wdata_fw_i;
+      SEL_FW_WB:   operand_c_fw_id = regfile_wdata_wb_i;
+      SEL_REGFILE: operand_c_fw_id = regfile_data_rc_id;
+      default:     operand_c_fw_id = regfile_data_rc_id;
     endcase
     ;  // case (operand_c_fw_mux_sel)
   end
-
-  assign operand_c_fw_ex = (operand_c_fw_mux_sel == SEL_FW_EX);
-  assign operand_c_fw_id = operand_c_fw_ex ? regfile_alu_wdata_fw_i : operand_c_rfwb_id;
 
 
   ///////////////////////////////////////////////////////////////////////////
@@ -1563,52 +1476,34 @@ module cv32e40p_id_stage
       // hwloop register id
       assign hwlp_regid = instr[7];  // rd contains hwloop register id
 
-      // Targets without the forwarding from EX, which replaces them in the last mux
-      logic [31:0] hwlp_end_rfwb;
-      logic [31:0] hwlp_start_rfwb;
-      logic [31:0] hwlp_cnt_rfwb;
-      logic        hwlp_end_fw_ex;
-      logic        hwlp_start_fw_ex;
-      logic        hwlp_cnt_fw_ex;
-
       // hwloop target mux
       always_comb begin
         case (hwlp_target_mux_sel)
-          2'b00:   hwlp_end_rfwb = pc_id_i + {imm_iz_type[29:0], 2'b0};
-          2'b01:   hwlp_end_rfwb = pc_id_i + {imm_z_type[29:0], 2'b0};
-          2'b10:   hwlp_end_rfwb = operand_a_rfwb_id;
-          default: hwlp_end_rfwb = operand_a_rfwb_id;
+          2'b00:   hwlp_end = pc_id_i + {imm_iz_type[29:0], 2'b0};
+          2'b01:   hwlp_end = pc_id_i + {imm_z_type[29:0], 2'b0};
+          2'b10:   hwlp_end = operand_a_fw_id;
+          default: hwlp_end = operand_a_fw_id;
         endcase
       end
 
       // hwloop start mux
       always_comb begin
         case (hwlp_start_mux_sel)
-          2'b00:   hwlp_start_rfwb = hwlp_end_rfwb;  // for PC + I imm
-          2'b01:   hwlp_start_rfwb = pc_id_i + 4;  // for next PC
-          2'b10:   hwlp_start_rfwb = operand_a_rfwb_id;
-          default: hwlp_start_rfwb = operand_a_rfwb_id;
+          2'b00:   hwlp_start = hwlp_end;  // for PC + I imm
+          2'b01:   hwlp_start = pc_id_i + 4;  // for next PC
+          2'b10:   hwlp_start = operand_a_fw_id;
+          default: hwlp_start = operand_a_fw_id;
         endcase
       end
 
       // hwloop cnt mux
       always_comb begin : hwlp_cnt_mux
         case (hwlp_cnt_mux_sel)
-          1'b0: hwlp_cnt_rfwb = imm_iz_type;
-          1'b1: hwlp_cnt_rfwb = operand_a_rfwb_id;
+          1'b0: hwlp_cnt = imm_iz_type;
+          1'b1: hwlp_cnt = operand_a_fw_id;
         endcase
         ;
       end
-
-      assign hwlp_end_fw_ex   = operand_a_fw_ex && hwlp_target_mux_sel[1];
-      assign hwlp_start_fw_ex = operand_a_fw_ex &&
-                                (hwlp_start_mux_sel[1] ||
-                                 (hwlp_start_mux_sel == 2'b00 && hwlp_target_mux_sel[1]));
-      assign hwlp_cnt_fw_ex   = operand_a_fw_ex && hwlp_cnt_mux_sel;
-
-      assign hwlp_end   = hwlp_end_fw_ex ? regfile_alu_wdata_fw_i : hwlp_end_rfwb;
-      assign hwlp_start = hwlp_start_fw_ex ? regfile_alu_wdata_fw_i : hwlp_start_rfwb;
-      assign hwlp_cnt   = hwlp_cnt_fw_ex ? regfile_alu_wdata_fw_i : hwlp_cnt_rfwb;
 
       /*
         when hwlp_mask is 1, the controller is about to take an interrupt
