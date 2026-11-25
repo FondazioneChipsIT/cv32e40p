@@ -313,7 +313,6 @@ module cv32e40p_id_stage
   logic [               1:0] bht_q           [2**BHT_ADDR_WIDTH];
   logic [BHT_ADDR_WIDTH-1:0] bht_raddr;
   logic [BHT_ADDR_WIDTH-1:0] bht_waddr;
-  logic                      clk_bht;
   logic                      branch_pred_id;  // the counter of the instruction in ID says taken
   logic                      branch_pred_ctrl;  // the branch in ID fetches its target
   logic                      branch_pred_ex;  // the branch in EX fetched its target
@@ -655,18 +654,11 @@ module cv32e40p_id_stage
   assign btb_wjal_o     = jal_in_dec;
   assign btb_wimm_o     = jal_in_dec ? imm_uj_type[12:1] : imm_sb_type[12:1];
 
-  // The counters are clocked only when a branch resolves in EX
-  cv32e40p_clock_gate bht_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (branch_in_ex_o),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_bht)
-  );
-
-  always_ff @(posedge clk_bht, negedge rst_n) begin : bht_update
+  // The counters load only when a branch resolves in EX
+  always_ff @(posedge clk, negedge rst_n) begin : bht_update
     if (rst_n == 1'b0) begin
       bht_q <= '{default: 2'b01};
-    end else begin
+    end else if (branch_in_ex_o) begin
       if (branch_decision_i && (bht_q[bht_waddr] != 2'b11)) begin
         bht_q[bht_waddr] <= bht_q[bht_waddr] + 2'b01;
       end else if (!branch_decision_i && (bht_q[bht_waddr] != 2'b00)) begin
