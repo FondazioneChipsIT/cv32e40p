@@ -34,6 +34,7 @@ module cv32e40p_if_stage #(
 ) (
     input logic clk,
     input logic rst_n,
+    input logic scan_cg_en_i,  // Enable all clock gates for testing
 
     // Used to calculate the exception offsets
     input logic [23:0] m_trap_base_addr_i,

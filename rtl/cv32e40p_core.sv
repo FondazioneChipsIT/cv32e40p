@@ -440,8 +440,9 @@ module cv32e40p_core
       .FPU        (FPU),
       .ZFINX      (ZFINX)
   ) if_stage_i (
-      .clk  (clk),
-      .rst_n(rst_ni),
+      .clk         (clk),
+      .rst_n       (rst_ni),
+      .scan_cg_en_i(scan_cg_en_i),
 
       // boot address
       .boot_addr_i        (boot_addr_i[31:0]),
