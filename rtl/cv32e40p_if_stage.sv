@@ -155,7 +155,6 @@ module cv32e40p_if_stage #(
   logic                      btb_we;
   logic                      btb_hit;
   logic [              11:0] btb_imm;
-  logic                      clk_btb;
   logic [              31:0] pred_target;
   logic                      pred_jump;  // fetch the BTB target after the instruction at pc_if
   logic                      pred_pending_q;  // pred_jump done, its instruction not yet in ID
@@ -296,20 +295,14 @@ module cv32e40p_if_stage #(
   assign btb_wtag   = btb_we ? pc_id_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH] : '0;
   assign btb_wimm   = btb_we ? btb_wimm_i[BTB_OFFSET_WIDTH-1:0] : '0;
 
-  cv32e40p_clock_gate btb_clock_gate_i (
-      .clk_i       (clk),
-      .en_i        (btb_we),
-      .scan_cg_en_i(scan_cg_en_i),
-      .clk_o       (clk_btb)
-  );
-
-  always_ff @(posedge clk_btb, negedge rst_n) begin : btb_update
+  // Load enable per entry: DC gates the clock of each entry
+  always_ff @(posedge clk, negedge rst_n) begin : btb_update
     if (rst_n == 1'b0) begin
       btb_valid_q <= '{default: 1'b0};
       btb_jal_q   <= '{default: 1'b0};
       btb_tag_q   <= '{default: '0};
       btb_imm_q   <= '{default: '0};
-    end else begin
+    end else if (btb_we) begin
       btb_valid_q[btb_waddr] <= btb_wvalid;
       btb_jal_q[btb_waddr]   <= btb_wjal;
       btb_tag_q[btb_waddr]   <= btb_wtag;
