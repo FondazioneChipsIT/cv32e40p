@@ -1416,9 +1416,10 @@ endgenerate
 
   assign branch_pred_id_o = branch_pred_dec;
 
-  // Only DECODE checks a BTB redirect; hardware loops need a sequential fetch
-  assign pred_en_o = (ctrl_fsm_cs == DECODE) && (hwlp_counter_i[0] == '0) &&
-                     (hwlp_counter_i[1] == '0);
+  // Only DECODE checks a BTB redirect; a hardware loop that jumps back needs a sequential
+  // fetch, but in its last iteration (counter 1) it jumps no more
+  assign pred_en_o = (ctrl_fsm_cs == DECODE) && (hwlp_counter_i[0][31:1] == '0) &&
+                     (hwlp_counter_i[1][31:1] == '0);
 
   // APU dependency stalls (data hazards)
   assign apu_stall_o = apu_read_dep_i | (apu_write_dep_i & ~apu_en_i);
