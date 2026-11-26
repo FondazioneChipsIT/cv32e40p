@@ -411,6 +411,7 @@ module cv32e40p_id_stage
 
   // APU signals
   logic apu_en;
+  logic apu_sel_id;  // the opcode in ID may be an APU instruction
   logic [APU_WOP_CPU-1:0] apu_op;
   logic [1:0] apu_lat;
   logic [APU_NARGS_CPU-1:0][31:0] apu_operands;
@@ -1024,11 +1025,15 @@ module cv32e40p_id_stage
   // (load_stall and jr_stall clear apu_en through deassert_we)
   assign apu_req_id_o      = apu_en & ~halt_id & ~misaligned_stall & ~apu_stall & ~csr_apu_stall & ex_ready_i;
   assign apu_lat_id_o      = apu_lat;
-  // The FPU samples its inputs only with apu_req: they stay at zero for the other
-  // instructions, so the operands of ALU and LSU instructions do not toggle its input logic
-  assign apu_op_id_o       = apu_en ? apu_op : '0;
-  assign apu_operands_id_o = apu_en ? apu_operands : '0;
-  assign apu_flags_id_o    = apu_en ? apu_flags : '0;
+  // The FPU samples its inputs only with apu_req: they stay at zero outside the opcodes that can
+  // set apu_en (OP-FP, fused multiply-adds, prefix 10 of OP), decoded early from the IF/ID
+  // register (apu_en waits for deassert_we, too late for the FPU input logic)
+  assign apu_sel_id        = (instr[6:0] == OPCODE_OP_FP) ||
+                             ((instr[6:4] == 3'b100) && (instr[1:0] == 2'b11)) ||
+                             ((instr[6:0] == OPCODE_OP) && (instr[31:30] == 2'b10));
+  assign apu_op_id_o       = apu_sel_id ? apu_op : '0;
+  assign apu_operands_id_o = apu_sel_id ? apu_operands : '0;
+  assign apu_flags_id_o    = apu_sel_id ? apu_flags : '0;
   assign apu_waddr_id_o    = apu_waddr;
 
   /////////////////////////////////////////////////////////
