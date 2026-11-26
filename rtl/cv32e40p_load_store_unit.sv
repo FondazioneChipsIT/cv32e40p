@@ -97,6 +97,7 @@ module cv32e40p_load_store_unit #(
   logic ctrl_update;  // Update load/store control info in WB stage
 
   logic [31:0] data_addr_int;
+  logic [31:0] store_wdata;  // write data, zero without a store in EX
 
   // registers for data_rdata alignment and sign extension
   logic [1:0] data_type_q;
@@ -169,12 +170,15 @@ module cv32e40p_load_store_unit #(
   // we handle misaligned accesses, half word and byte accesses and
   // register offsets here
   assign wdata_offset = data_addr_int[1:0] - data_reg_offset_ex_i[1:0];
+  // The rotator and the OBI write data follow operand c only for a store
+  assign store_wdata = (data_req_ex_i && data_we_ex_i) ? data_wdata_ex_i : '0;
+
   always_comb begin
     case (wdata_offset)
-      2'b00: data_wdata = data_wdata_ex_i[31:0];
-      2'b01: data_wdata = {data_wdata_ex_i[23:0], data_wdata_ex_i[31:24]};
-      2'b10: data_wdata = {data_wdata_ex_i[15:0], data_wdata_ex_i[31:16]};
-      2'b11: data_wdata = {data_wdata_ex_i[7:0], data_wdata_ex_i[31:8]};
+      2'b00: data_wdata = store_wdata[31:0];
+      2'b01: data_wdata = {store_wdata[23:0], store_wdata[31:24]};
+      2'b10: data_wdata = {store_wdata[15:0], store_wdata[31:16]};
+      2'b11: data_wdata = {store_wdata[7:0], store_wdata[31:8]};
     endcase
     ;  // case (wdata_offset)
   end
