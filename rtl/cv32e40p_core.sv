@@ -1091,7 +1091,9 @@ module cv32e40p_core
 
   //  CSR access
   assign csr_addr = csr_addr_int;
-  assign csr_wdata = alu_operand_a_ex;
+  // Zero outside CSR instructions: operand a of every instruction in EX does not toggle the
+  // write data muxes of all the CSRs
+  assign csr_wdata = csr_access_ex ? alu_operand_a_ex : '0;
   assign csr_op = csr_op_ex;
 
   assign csr_addr_int = csr_num_e'(csr_access_ex ? alu_operand_b_ex[11:0] : '0);
