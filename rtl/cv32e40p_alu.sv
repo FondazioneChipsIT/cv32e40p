@@ -78,6 +78,37 @@ module cv32e40p_alu
 
   assign operand_b_neg = ~operand_b_i;
 
+  // Operands of the units that only a few operators read (shuffle and pack, min/max/abs/clip,
+  // bit set/clear, population count, bit reverse): zero for the other operators, so that the
+  // operands of every add, shift, compare and address do not toggle these units
+  logic        pack_en;
+  logic        minmax_en;
+  logic        bitset_en;
+  logic        cnt_en;
+  logic [31:0] pack_op_a;
+  logic [31:0] pack_op_b;
+  logic [31:0] pack_op_c;
+  logic [31:0] minmax_op_a;
+  logic [31:0] minmax_op_b;
+  logic [31:0] bitset_op_a;
+  logic [31:0] cnt_op_a;
+
+  assign pack_en   = operator_i inside {ALU_SHUF, ALU_SHUF2, ALU_PCKLO, ALU_PCKHI, ALU_EXT,
+                                        ALU_EXTS, ALU_INS};
+  assign minmax_en = operator_i inside {ALU_MIN, ALU_MINU, ALU_MAX, ALU_MAXU, ALU_ABS, ALU_CLIP,
+                                        ALU_CLIPU};
+  assign bitset_en = operator_i inside {ALU_BCLR, ALU_BSET};
+  // The divider reads the population count of its divisor (zero check)
+  assign cnt_en    = operator_i inside {ALU_CNT, ALU_DIV, ALU_DIVU, ALU_REM, ALU_REMU};
+
+  assign pack_op_a   = pack_en ? operand_a_i : '0;
+  assign pack_op_b   = pack_en ? operand_b_i : '0;
+  assign pack_op_c   = pack_en ? operand_c_i : '0;
+  assign minmax_op_a = minmax_en ? operand_a_i : '0;
+  assign minmax_op_b = minmax_en ? operand_b_i : '0;
+  assign bitset_op_a = bitset_en ? operand_a_i : '0;
+  assign cnt_op_a    = cnt_en ? operand_a_i : '0;
+
 
   logic [ 5:0] div_shift;
   logic        div_valid;
@@ -336,11 +367,11 @@ module cv32e40p_alu
 
   //second == comparator for CLIP instructions
   always_comb begin
-    operand_b_eq = operand_b_neg;
+    operand_b_eq = ~minmax_op_b;
     if (operator_i == ALU_CLIPU) operand_b_eq = '0;
-    else operand_b_eq = operand_b_neg;
+    else operand_b_eq = ~minmax_op_b;
   end
-  assign is_equal_clip = operand_a_i == operand_b_eq;
+  assign is_equal_clip = minmax_op_a == operand_b_eq;
 
   always_comb begin
     cmp_signed = 4'b0;
@@ -433,17 +464,17 @@ module cv32e40p_alu
   logic        do_min;
   logic [31:0] minmax_b;
 
-  assign minmax_b = (operator_i == ALU_ABS) ? adder_result : operand_b_i;
+  assign minmax_b = (operator_i == ALU_ABS) ? adder_result : minmax_op_b;
 
   assign do_min   = (operator_i == ALU_MIN)  || (operator_i == ALU_MINU) ||
                     (operator_i == ALU_CLIP) || (operator_i == ALU_CLIPU);
 
   assign sel_minmax[3:0] = is_greater ^ {4{do_min}};
 
-  assign result_minmax[31:24] = (sel_minmax[3] == 1'b1) ? operand_a_i[31:24] : minmax_b[31:24];
-  assign result_minmax[23:16] = (sel_minmax[2] == 1'b1) ? operand_a_i[23:16] : minmax_b[23:16];
-  assign result_minmax[15:8] = (sel_minmax[1] == 1'b1) ? operand_a_i[15:8] : minmax_b[15:8];
-  assign result_minmax[7:0] = (sel_minmax[0] == 1'b1) ? operand_a_i[7:0] : minmax_b[7:0];
+  assign result_minmax[31:24] = (sel_minmax[3] == 1'b1) ? minmax_op_a[31:24] : minmax_b[31:24];
+  assign result_minmax[23:16] = (sel_minmax[2] == 1'b1) ? minmax_op_a[23:16] : minmax_b[23:16];
+  assign result_minmax[15:8] = (sel_minmax[1] == 1'b1) ? minmax_op_a[15:8] : minmax_b[15:8];
+  assign result_minmax[7:0] = (sel_minmax[0] == 1'b1) ? minmax_op_a[7:0] : minmax_b[7:0];
 
   //////////////////////////////////////////////////
   // Clip
@@ -453,15 +484,14 @@ module cv32e40p_alu
   always_comb begin
     clip_result = result_minmax;
     if (operator_i == ALU_CLIPU) begin
-      if (operand_a_i[31] || is_equal_clip) begin
+      if (minmax_op_a[31] || is_equal_clip) begin
         clip_result = '0;
       end else begin
         clip_result = result_minmax;
       end
-    end else begin
-      //CLIP
+    end else if (operator_i == ALU_CLIP) begin
       if (adder_result_expanded[36] || is_equal_clip) begin
-        clip_result = operand_b_neg;
+        clip_result = ~minmax_op_b;
       end else begin
         clip_result = result_minmax;
       end
@@ -680,12 +710,12 @@ module cv32e40p_alu
   end
 
   assign shuffle_r0_in = shuffle_reg0_sel[1] ?
-                          operand_a_i :
-                          (shuffle_reg0_sel[0] ? {2{operand_a_i[15:0]}} : {4{operand_a_i[7:0]}});
+                          pack_op_a :
+                          (shuffle_reg0_sel[0] ? {2{pack_op_a[15:0]}} : {4{pack_op_a[7:0]}});
 
   assign shuffle_r1_in = shuffle_reg1_sel[1] ? {
-    {8{operand_a_i[31]}}, {8{operand_a_i[23]}}, {8{operand_a_i[15]}}, {8{operand_a_i[7]}}
-  } : (shuffle_reg1_sel[0] ? operand_c_i : operand_b_i);
+    {8{pack_op_a[31]}}, {8{pack_op_a[23]}}, {8{pack_op_a[15]}}, {8{pack_op_a[7]}}
+  } : (shuffle_reg1_sel[0] ? pack_op_c : pack_op_b);
 
   assign shuffle_r0[31:24] = shuffle_byte_sel[3][1] ?
                               (shuffle_byte_sel[3][0] ? shuffle_r0_in[31:24] : shuffle_r0_in[23:16]) :
@@ -718,10 +748,10 @@ module cv32e40p_alu
   assign shuffle_result[15:8] = shuffle_reg_sel[1] ? shuffle_r1[15:8] : shuffle_r0[15:8];
   assign shuffle_result[7:0] = shuffle_reg_sel[0] ? shuffle_r1[7:0] : shuffle_r0[7:0];
 
-  assign pack_result[31:24] = shuffle_through[3] ? shuffle_result[31:24] : operand_c_i[31:24];
-  assign pack_result[23:16] = shuffle_through[2] ? shuffle_result[23:16] : operand_c_i[23:16];
-  assign pack_result[15:8] = shuffle_through[1] ? shuffle_result[15:8] : operand_c_i[15:8];
-  assign pack_result[7:0] = shuffle_through[0] ? shuffle_result[7:0] : operand_c_i[7:0];
+  assign pack_result[31:24] = shuffle_through[3] ? shuffle_result[31:24] : pack_op_c[31:24];
+  assign pack_result[23:16] = shuffle_through[2] ? shuffle_result[23:16] : pack_op_c[23:16];
+  assign pack_result[15:8] = shuffle_through[1] ? shuffle_result[15:8] : pack_op_c[15:8];
+  assign pack_result[7:0] = shuffle_through[0] ? shuffle_result[7:0] : pack_op_c[7:0];
 
 
   /////////////////////////////////////////////////////////////////////
@@ -742,7 +772,7 @@ module cv32e40p_alu
   logic [ 5:0] bitop_result;  // result of all bitop operations muxed together
 
   cv32e40p_popcnt popcnt_i (
-      .in_i    (operand_a_i),
+      .in_i    (cnt_op_a),
       .result_o(cnt_result)
   );
 
@@ -820,8 +850,8 @@ module cv32e40p_alu
 
   assign bextins_result    = (bmask & shift_result) | (bextins_and & bmask_inv);
 
-  assign bclr_result       = operand_a_i & bmask_inv;
-  assign bset_result       = operand_a_i | bmask;
+  assign bclr_result       = bitset_op_a & bmask_inv;
+  assign bset_result       = bitset_op_a | bmask;
 
   /////////////////////////////////////////////////////////////////////////////////
   //  ____ _____ _______     _____  ________      ________ _____   _____ ______  //
