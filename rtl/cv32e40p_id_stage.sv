@@ -323,14 +323,17 @@ module cv32e40p_id_stage
   logic                      jal_in_dec;
   logic                      jal_btb_fits;  // the jal offset fits the 12 bits of a BTB entry
 
-  // Equality branch on load data: it enters EX with the load and compares the load data in WB
-  logic                      branch_late_ok;  // the branch in ID tests equality
+  // Branch on load data: it enters EX with the load and compares the load data in WB
   logic                      branch_late;  // the branch in ID enters EX before its load data
   logic [               1:0] branch_late_ex;  // operands a, b of the branch in EX are the load data
   logic                      branch_late_in_ex;
   logic                      late_stall;  // the instruction in ID waits for the branch on load data
   logic                      late_stall_ctrl;
+  logic [              31:0] late_a;
+  logic [              31:0] late_b;
+  logic                      late_signed;
   logic                      late_eq;
+  logic                      late_lt;
   logic                      late_taken;
   logic                      late_kill;  // the branch on load data mispredicted: ID becomes a bubble
   logic                      late_redirect_q;  // it redirects the fetch in this cycle
@@ -623,16 +626,23 @@ module cv32e40p_id_stage
   assign branch_taken_ex = (branch_in_ex_o && !branch_late_in_ex &&
                             (branch_decision_i != branch_pred_ex)) || late_redirect_q;
 
-  assign branch_late_ok = (ctrl_transfer_insn_in_dec_o == BRANCH_COND) &&
-                          ((alu_operator == ALU_EQ) || (alu_operator == ALU_NE));
-
-  // Own comparator, so that the load data reaches no ALU path: both operands from the load are
-  // equal, otherwise the load data is compared with the other operand
+  // Own comparator, so that the load data reaches no ALU path
   assign branch_late_in_ex = branch_in_ex_o && (branch_late_ex != 2'b00);
   assign branch_wait_ex_o  = branch_late_in_ex && !wb_ready_i;
-  assign late_eq           = (branch_late_ex == 2'b11) ||
-      (regfile_wdata_wb_i == (branch_late_ex[0] ? alu_operand_b_ex_o : alu_operand_a_ex_o));
-  assign late_taken        = late_eq ^ (alu_operator_ex_o == ALU_NE);
+  assign late_a            = branch_late_ex[0] ? regfile_wdata_wb_i : alu_operand_a_ex_o;
+  assign late_b            = branch_late_ex[1] ? regfile_wdata_wb_i : alu_operand_b_ex_o;
+  assign late_signed       = (alu_operator_ex_o == ALU_LTS) || (alu_operator_ex_o == ALU_GES);
+  assign late_eq           = late_a == late_b;
+  assign late_lt           = $signed({late_signed && late_a[31], late_a}) <
+                             $signed({late_signed && late_b[31], late_b});
+  always_comb begin
+    unique case (alu_operator_ex_o)
+      ALU_EQ:           late_taken = late_eq;
+      ALU_NE:           late_taken = !late_eq;
+      ALU_LTS, ALU_LTU: late_taken = late_lt;
+      default:          late_taken = !late_lt;  // ALU_GES, ALU_GEU
+    endcase
+  end
   assign late_kill         = branch_late_in_ex && !branch_wait_ex_o &&
                              (late_taken != branch_pred_ex);
   assign branch_outcome    = branch_late_in_ex ? late_taken : branch_decision_i;
@@ -1368,7 +1378,6 @@ module cv32e40p_id_stage
       .branch_btb_ok_i            (branch_btb_ok),
       .branch_btb_bad_i           (branch_btb_bad),
       .pred_en_o                  (pred_en_o),
-      .branch_late_ok_i           (branch_late_ok),
       .branch_late_ex_i           (branch_late_in_ex),
       .branch_late_o              (branch_late),
       .late_stall_o               (late_stall_ctrl),

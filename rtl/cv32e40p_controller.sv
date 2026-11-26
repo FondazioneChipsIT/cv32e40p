@@ -117,7 +117,6 @@ module cv32e40p_controller import cv32e40p_pkg::*;
   input  logic        branch_btb_ok_i,            // IF already fetches the target of the jal or branch in ID
   input  logic        branch_btb_bad_i,           // IF fetched a wrong BTB target after the instruction in ID
   output logic        pred_en_o,                  // IF may fetch a BTB target
-  input  logic        branch_late_ok_i,           // the branch in ID tests equality (may take load data in EX)
   input  logic        branch_late_ex_i,           // the branch in EX takes an operand from the load in WB
   output logic        branch_late_o,              // the branch in ID enters EX before its load data
   output logic        late_stall_o,               // the instruction in ID waits for that branch to resolve
@@ -1377,9 +1376,10 @@ endgenerate
     load_stall_o   = 1'b0;
     deassert_we_o  = 1'b0;
 
-    // An equality branch whose only hazard is the load in EX enters EX and takes the load data
-    // there (its WB data must not be pending)
-    branch_late_o  = branch_late_ok_i && is_decoding_o && (ctrl_fsm_cs == DECODE) &&
+    // A branch whose only hazard is the load in EX enters EX and takes the load data there (its
+    // WB data must not be pending)
+    branch_late_o  = (ctrl_transfer_insn_in_dec_i == BRANCH_COND) && is_decoding_o &&
+                     (ctrl_fsm_cs == DECODE) &&
                      !debug_single_step_i && !is_hwlp_body &&
                      data_req_ex_i && regfile_we_ex_i && !(!wb_ready_i && regfile_we_wb_i) &&
                      (reg_d_ex_is_reg_a_i || reg_d_ex_is_reg_b_i) && !reg_d_ex_is_reg_c_i;
