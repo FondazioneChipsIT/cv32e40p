@@ -136,8 +136,10 @@ module cv32e40p_if_stage #(
   logic [31:0] instr_decompressed;
   logic        instr_compressed_int;
 
-  // Branch target buffer: offset of a taken branch, indexed by pc[BTB_ADDR_WIDTH:1]
+  // Branch target buffer: offset of a taken branch, 2 ways per set, set pc[BTB_SET_WIDTH:1];
+  // entry {set, way}
   localparam int BTB_ADDR_WIDTH = 4;
+  localparam int BTB_SET_WIDTH = BTB_ADDR_WIDTH - 1;
   localparam int BTB_TAG_WIDTH = 8;
   localparam int BTB_OFFSET_WIDTH = 12;  // offset [BTB_OFFSET_WIDTH:1]; longer ones are not stored
 
@@ -150,11 +152,20 @@ module cv32e40p_if_stage #(
   logic                      btb_wjal;
   logic [ BTB_TAG_WIDTH-1:0] btb_wtag;
   logic [BTB_OFFSET_WIDTH-1:0] btb_wimm;
+  logic [ BTB_SET_WIDTH-1:0] btb_rset;
+  logic [ BTB_TAG_WIDTH-1:0] btb_rtag;
+  logic [               1:0] btb_way_hit;
+  logic                      btb_rway;  // way that hits (way 0 first)
   logic [BTB_ADDR_WIDTH-1:0] btb_raddr;
+  logic [ BTB_SET_WIDTH-1:0] btb_wset;
+  logic                      btb_wway;
   logic [BTB_ADDR_WIDTH-1:0] btb_waddr;
   logic                      btb_we;
   logic                      btb_hit;
   logic                      btb_pred;  // the entry at pc_if predicts a taken jump
+  logic [2**BTB_SET_WIDTH-1:0] btb_lru_q;  // way of each set to replace next
+  logic                      btb_hit_id_q;  // the instruction in ID hit the BTB in IF
+  logic                      btb_way_id_q;  // in this way
   logic [              11:0] btb_imm;
   logic [              31:0] pred_target;
   logic                      pred_jump;  // fetch the BTB target after the instruction at pc_if
@@ -278,9 +289,15 @@ module cv32e40p_if_stage #(
   // the instruction and the offset, and redirects the fetch when they differ.
   //////////////////////////////////////////////////////////////////////////////
 
-  assign btb_raddr = pc_if_o[BTB_ADDR_WIDTH:1];
-  assign btb_hit = btb_valid_q[btb_raddr] &&
-      (btb_tag_q[btb_raddr] == pc_if_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH]);
+  assign btb_rset  = pc_if_o[BTB_SET_WIDTH:1];
+  assign btb_rtag  = pc_if_o[BTB_SET_WIDTH+1+:BTB_TAG_WIDTH];
+  for (genvar w = 0; w < 2; w++) begin : gen_btb_way_hit
+    assign btb_way_hit[w] = btb_valid_q[{btb_rset, 1'(w)}] &&
+                            (btb_tag_q[{btb_rset, 1'(w)}] == btb_rtag);
+  end
+  assign btb_rway  = !btb_way_hit[0];
+  assign btb_raddr = {btb_rset, btb_rway};
+  assign btb_hit   = btb_way_hit != 2'b00;
   assign btb_imm = 12'($signed(btb_imm_q[btb_raddr]));
   assign btb_pred = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i);
 
@@ -296,8 +313,11 @@ module cv32e40p_if_stage #(
   // fetched at once, all sequential words are dropped, and it leaves IF without a fetched word
   assign pred_flush = btb_pred && pred_en_i && pred_ok_held && pred_ok_fetch;
 
-  // The entry read by a pending redirect does not change until its instruction is in ID
-  assign btb_waddr = pc_id_o[BTB_ADDR_WIDTH:1];
+  // The entry read by a pending redirect does not change until its instruction is in ID. The
+  // instruction in ID writes the way it hit in IF, else the least recently written one
+  assign btb_wset  = pc_id_o[BTB_SET_WIDTH:1];
+  assign btb_wway  = btb_hit_id_q ? btb_way_id_q : btb_lru_q[btb_wset];
+  assign btb_waddr = {btb_wset, btb_wway};
   // An offset that does not fit keeps the entry it would replace
   assign btb_wfits = 12'($signed(btb_wimm_i[BTB_OFFSET_WIDTH-1:0])) == btb_wimm_i;
   assign btb_we    = btb_we_i && !pred_pending_q && (btb_wfits || !btb_wvalid_i);
@@ -305,7 +325,7 @@ module cv32e40p_if_stage #(
   // Write data stays at zero between writes: the entries do not follow the instructions in ID
   assign btb_wvalid = btb_we && btb_wvalid_i;
   assign btb_wjal   = btb_we && btb_wjal_i;
-  assign btb_wtag   = btb_we ? pc_id_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH] : '0;
+  assign btb_wtag   = btb_we ? pc_id_o[BTB_SET_WIDTH+1+:BTB_TAG_WIDTH] : '0;
   assign btb_wimm   = btb_we ? btb_wimm_i[BTB_OFFSET_WIDTH-1:0] : '0;
 
   // Load enable per entry: DC gates the clock of each entry
@@ -323,12 +343,23 @@ module cv32e40p_if_stage #(
     end
   end
 
+  // A written entry is replaced last, a cleared one first
+  always_ff @(posedge clk, negedge rst_n) begin : btb_lru
+    if (rst_n == 1'b0) begin
+      btb_lru_q <= '0;
+    end else if (btb_we) begin
+      btb_lru_q[btb_wset] <= btb_wvalid_i ? !btb_wway : btb_wway;
+    end
+  end
+
   always_ff @(posedge clk, negedge rst_n) begin : pred_pipe
     if (rst_n == 1'b0) begin
       pred_pending_q  <= 1'b0;
       pred_flush_q    <= 1'b0;
       pred_taken_id_o <= 1'b0;
       pred_imm_id_o   <= '0;
+      btb_hit_id_q    <= 1'b0;
+      btb_way_id_q    <= 1'b0;
     end else begin
       if (branch_req || (if_valid && instr_valid)) begin
         pred_pending_q <= 1'b0;
@@ -338,6 +369,8 @@ module cv32e40p_if_stage #(
         pred_flush_q   <= pred_flush;
       end
       if (if_valid && instr_valid) begin
+        btb_hit_id_q    <= btb_hit;
+        btb_way_id_q    <= btb_rway;
         pred_taken_id_o <= pred_jump || pred_flush || pred_pending_q;
         if (pred_jump || pred_flush || pred_pending_q) begin
           pred_imm_id_o <= btb_imm;
