@@ -68,6 +68,7 @@ module cv32e40p_id_stage
 
     // Jumps and branches
     output logic        branch_in_ex_o,
+    output logic        branch_wait_ex_o,  // the branch in EX waits for its load data
     input  logic        branch_decision_i,
     output logic [31:0] jump_target_o,
     output logic [ 1:0] ctrl_transfer_insn_in_dec_o,
@@ -321,6 +322,19 @@ module cv32e40p_id_stage
   logic                      branch_btb_bad;  // IF fetched a wrong BTB target
   logic                      jal_in_dec;
   logic                      jal_btb_fits;  // the jal offset fits the 12 bits of a BTB entry
+
+  // Equality branch on load data: it enters EX with the load and compares the load data in WB
+  logic                      branch_late_ok;  // the branch in ID tests equality
+  logic                      branch_late;  // the branch in ID enters EX before its load data
+  logic [               1:0] branch_late_ex;  // operands a, b of the branch in EX are the load data
+  logic                      branch_late_in_ex;
+  logic                      late_stall;  // the instruction in ID waits for the branch on load data
+  logic                      late_stall_ctrl;
+  logic                      late_eq;
+  logic                      late_taken;
+  logic                      late_kill;  // the branch on load data mispredicted: ID becomes a bubble
+  logic                      late_redirect_q;  // it redirects the fetch in this cycle
+  logic                      branch_outcome;  // the branch in EX is taken
 
   logic        misaligned_stall;
   logic        jr_stall;
@@ -604,8 +618,36 @@ module cv32e40p_id_stage
   assign clear_instr_valid_o = id_ready_o | halt_id | branch_taken_ex;
 
   // The branch in EX redirects the fetch (and kills ID) when its outcome differs from its
-  // prediction; the name is kept for the testbench probes
-  assign branch_taken_ex = branch_in_ex_o && (branch_decision_i != branch_pred_ex);
+  // prediction; a branch on load data does it one cycle after it leaves EX, from a flop. The name
+  // is kept for the testbench probes
+  assign branch_taken_ex = (branch_in_ex_o && !branch_late_in_ex &&
+                            (branch_decision_i != branch_pred_ex)) || late_redirect_q;
+
+  assign branch_late_ok = (ctrl_transfer_insn_in_dec_o == BRANCH_COND) &&
+                          ((alu_operator == ALU_EQ) || (alu_operator == ALU_NE));
+
+  // Own comparator, so that the load data reaches no ALU path: both operands from the load are
+  // equal, otherwise the load data is compared with the other operand
+  assign branch_late_in_ex = branch_in_ex_o && (branch_late_ex != 2'b00);
+  assign branch_wait_ex_o  = branch_late_in_ex && !wb_ready_i;
+  assign late_eq           = (branch_late_ex == 2'b11) ||
+      (regfile_wdata_wb_i == (branch_late_ex[0] ? alu_operand_b_ex_o : alu_operand_a_ex_o));
+  assign late_taken        = late_eq ^ (alu_operator_ex_o == ALU_NE);
+  assign late_kill         = branch_late_in_ex && !branch_wait_ex_o &&
+                             (late_taken != branch_pred_ex);
+  assign branch_outcome    = branch_late_in_ex ? late_taken : branch_decision_i;
+
+  // An FP operation (issued from ID) or a hardware loop setup cannot become a bubble
+  assign late_stall = late_stall_ctrl ||
+                      (branch_late_in_ex && (apu_en || (hwlp_we != 3'b000)));
+
+  always_ff @(posedge clk, negedge rst_n) begin : late_redirect
+    if (rst_n == 1'b0) begin
+      late_redirect_q <= 1'b0;
+    end else begin
+      late_redirect_q <= late_kill;
+    end
+  end
 
 
   assign mult_en = mult_int_en | mult_dot_en;
@@ -668,10 +710,10 @@ module cv32e40p_id_stage
   always_ff @(posedge clk, negedge rst_n) begin : bht_update
     if (rst_n == 1'b0) begin
       bht_q <= '{default: 2'b01};
-    end else if (branch_in_ex_o) begin
-      if (branch_decision_i && (bht_q[bht_waddr] != 2'b11)) begin
+    end else if (branch_in_ex_o && !branch_wait_ex_o) begin
+      if (branch_outcome && (bht_q[bht_waddr] != 2'b11)) begin
         bht_q[bht_waddr] <= bht_q[bht_waddr] + 2'b01;
-      end else if (!branch_decision_i && (bht_q[bht_waddr] != 2'b00)) begin
+      end else if (!branch_outcome && (bht_q[bht_waddr] != 2'b00)) begin
         bht_q[bht_waddr] <= bht_q[bht_waddr] - 2'b01;
       end
     end
@@ -1034,7 +1076,8 @@ module cv32e40p_id_stage
 
   // APU request from ID: sent when the instruction leaves ID, but for the stall of the dispatcher itself
   // (load_stall and jr_stall clear apu_en through deassert_we)
-  assign apu_req_id_o      = apu_en & ~halt_id & ~misaligned_stall & ~apu_stall & ~csr_apu_stall & ex_ready_i;
+  assign apu_req_id_o      = apu_en & ~halt_id & ~misaligned_stall & ~apu_stall & ~csr_apu_stall & ex_ready_i &
+                             ~branch_late_in_ex;
   assign apu_lat_id_o      = apu_lat;
   // The FPU samples its inputs only with apu_req: they stay at zero outside the opcodes that can
   // set apu_en (OP-FP, fused multiply-adds, prefix 10 of OP), decoded early from the IF/ID
@@ -1325,6 +1368,10 @@ module cv32e40p_id_stage
       .branch_btb_ok_i            (branch_btb_ok),
       .branch_btb_bad_i           (branch_btb_bad),
       .pred_en_o                  (pred_en_o),
+      .branch_late_ok_i           (branch_late_ok),
+      .branch_late_ex_i           (branch_late_in_ex),
+      .branch_late_o              (branch_late),
+      .late_stall_o               (late_stall_ctrl),
       .ctrl_transfer_insn_in_id_i (ctrl_transfer_insn_in_id),
       .ctrl_transfer_insn_in_dec_i(ctrl_transfer_insn_in_dec_o),
 
@@ -1405,7 +1452,8 @@ module cv32e40p_id_stage
       .load_stall_o      (load_stall),
 
       .id_ready_i(id_ready_o),
-      .id_valid_i(id_valid_o),
+      // the instruction killed behind a branch on load data does not leave ID (testbench probe)
+      .id_valid_i(id_valid_o && !late_kill),
 
       .ex_valid_i(ex_valid_i),
 
@@ -1631,6 +1679,7 @@ module cv32e40p_id_stage
 
       branch_in_ex_o         <= 1'b0;
       branch_pred_ex         <= 1'b0;
+      branch_late_ex         <= 2'b00;
 
     end else if (data_misaligned_i) begin
       // misaligned data access case
@@ -1654,7 +1703,9 @@ module cv32e40p_id_stage
     end else begin
       // normal pipeline unstall case
 
-      if (id_valid_o) begin  // unstall the whole pipeline
+      // the instruction behind a mispredicted branch on load data enters EX as a bubble, which
+      // keeps the redirect target of the branch in operand c
+      if (id_valid_o && !late_kill) begin  // unstall the whole pipeline
         alu_en_ex_o <= alu_en;
         if (alu_en) begin
           alu_operator_ex_o  <= alu_operator;
@@ -1741,6 +1792,7 @@ module cv32e40p_id_stage
 
         branch_in_ex_o <= ctrl_transfer_insn_in_id == BRANCH_COND;
         branch_pred_ex <= (ctrl_transfer_insn_in_id == BRANCH_COND) && branch_pred_ctrl;
+        branch_late_ex <= branch_late ? {reg_d_ex_is_reg_b_id, reg_d_ex_is_reg_a_id} : 2'b00;
       end else if (ex_ready_i) begin
         // EX stage is ready but we don't have a new instruction for it,
         // so we set all write enables to 0, but unstall the pipe
@@ -1759,6 +1811,7 @@ module cv32e40p_id_stage
 
         branch_in_ex_o       <= 1'b0;
         branch_pred_ex       <= 1'b0;
+        branch_late_ex       <= 2'b00;
 
         apu_en_ex_o          <= 1'b0;
 
@@ -1782,7 +1835,8 @@ module cv32e40p_id_stage
   // Illegal/ebreak/ecall are never counted as retired instructions. Note that actually issued instructions
   // are being counted; the manner in which CSR instructions access the performance counters guarantees
   // that this count will correspond to the retired isntructions count.
-  assign minstret = id_valid_o && is_decoding_o && !(illegal_insn_dec || ebrk_insn_dec || ecall_insn_dec);
+  assign minstret = id_valid_o && !late_kill && is_decoding_o &&
+                    !(illegal_insn_dec || ebrk_insn_dec || ecall_insn_dec);
 
   always_ff @(posedge clk, negedge rst_n) begin
     if (rst_n == 1'b0) begin
@@ -1809,7 +1863,7 @@ module cv32e40p_id_stage
       mhpmevent_branch_o <= minstret && (ctrl_transfer_insn_in_id == BRANCH_COND);
       mhpmevent_compressed_o <= minstret && is_compressed_i;
       // EX stage count
-      mhpmevent_branch_taken_o <= mhpmevent_branch_o && branch_decision_i;
+      mhpmevent_branch_taken_o <= branch_in_ex_o && !branch_wait_ex_o && branch_outcome;
       // IF stage count
       mhpmevent_imiss_o <= perf_imiss_i;
       // Jump-register-hazard; do not count stall on flushed instructions (id_valid_q used to only count first cycle)
@@ -1823,7 +1877,7 @@ module cv32e40p_id_stage
 
   // stall control
   assign id_ready_o = ((~misaligned_stall) & (~jr_stall) & (~load_stall) & (~apu_stall) & (~csr_apu_stall) &
-                       (~apu_disp_stall_i) & ex_ready_i);
+                       (~apu_disp_stall_i) & (~late_stall) & ex_ready_i);
   assign id_valid_o = (~halt_id) & id_ready_o;
   assign halt_if_o = halt_if;
 

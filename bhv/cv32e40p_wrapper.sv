@@ -129,7 +129,7 @@ module cv32e40p_wrapper
       .NUM_MHPMCOUNTERS(NUM_MHPMCOUNTERS)
   ) core_log_i (
       .clk_i             (cv32e40p_top_i.core_i.id_stage_i.clk),
-      .is_decoding_i     (cv32e40p_top_i.core_i.id_stage_i.is_decoding_o),
+      .is_decoding_i     (cv32e40p_top_i.core_i.id_stage_i.is_decoding_o && !cv32e40p_top_i.core_i.id_stage_i.late_kill),
       .illegal_insn_dec_i(cv32e40p_top_i.core_i.id_stage_i.illegal_insn_dec),
       .hart_id_i         (cv32e40p_top_i.core_i.hart_id_i),
       .pc_id_i           (cv32e40p_top_i.core_i.pc_id)
@@ -162,7 +162,7 @@ module cv32e40p_wrapper
       .controller_state_i(cv32e40p_top_i.core_i.id_stage_i.controller_i.ctrl_fsm_cs),
       .compressed        (cv32e40p_top_i.core_i.id_stage_i.is_compressed_i),
       .id_valid          (cv32e40p_top_i.core_i.id_stage_i.id_valid_o),
-      .is_decoding       (cv32e40p_top_i.core_i.id_stage_i.is_decoding_o),
+      .is_decoding       (cv32e40p_top_i.core_i.id_stage_i.is_decoding_o && !cv32e40p_top_i.core_i.id_stage_i.late_kill),
       .is_illegal        (cv32e40p_top_i.core_i.id_stage_i.illegal_insn_dec),
       .trigger_match     (cv32e40p_top_i.core_i.id_stage_i.trigger_match_i),
       .rs1_value         (cv32e40p_top_i.core_i.id_stage_i.operand_a_fw_id),
@@ -245,7 +245,7 @@ module cv32e40p_wrapper
       .clk_i (cv32e40p_top_i.core_i.clk_i),
       .rst_ni(cv32e40p_top_i.core_i.rst_ni),
 
-      .is_decoding_i    (cv32e40p_top_i.core_i.id_stage_i.is_decoding_o),
+      .is_decoding_i    (cv32e40p_top_i.core_i.id_stage_i.is_decoding_o && !cv32e40p_top_i.core_i.id_stage_i.late_kill),
       .is_illegal_i     (cv32e40p_top_i.core_i.id_stage_i.illegal_insn_dec),
       .trigger_match_i  (cv32e40p_top_i.core_i.id_stage_i.trigger_match_i),
       .data_misaligned_i(cv32e40p_top_i.core_i.data_misaligned),

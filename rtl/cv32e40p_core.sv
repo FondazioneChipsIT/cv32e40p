@@ -158,6 +158,7 @@ module cv32e40p_core
   // Jump and branch target and decision (EX->IF)
   logic [31:0] jump_target_id, jump_target_ex;
   logic               branch_in_ex;
+  logic               branch_wait_ex;  // the branch in EX waits for its load data
   logic               branch_decision;
   logic        [ 1:0] ctrl_transfer_insn_in_dec;
 
@@ -568,6 +569,7 @@ module cv32e40p_core
 
       // Jumps and branches
       .branch_in_ex_o             (branch_in_ex),
+      .branch_wait_ex_o           (branch_wait_ex),
       .branch_decision_i          (branch_decision),
       .jump_target_o              (jump_target_id),
       .ctrl_transfer_insn_in_dec_o(ctrl_transfer_insn_in_dec),
@@ -880,7 +882,7 @@ module cv32e40p_core
       .csr_rdata_i (csr_rdata),
 
       // From ID Stage: Regfile control signals
-      .branch_in_ex_i     (branch_in_ex),
+      .branch_in_ex_i     (branch_in_ex && !branch_wait_ex),
       .regfile_alu_waddr_i(regfile_alu_waddr_ex),
       .regfile_alu_we_i   (regfile_alu_we_ex),
 

@@ -117,6 +117,10 @@ module cv32e40p_controller import cv32e40p_pkg::*;
   input  logic        branch_btb_ok_i,            // IF already fetches the target of the jal or branch in ID
   input  logic        branch_btb_bad_i,           // IF fetched a wrong BTB target after the instruction in ID
   output logic        pred_en_o,                  // IF may fetch a BTB target
+  input  logic        branch_late_ok_i,           // the branch in ID tests equality (may take load data in EX)
+  input  logic        branch_late_ex_i,           // the branch in EX takes an operand from the load in WB
+  output logic        branch_late_o,              // the branch in ID enters EX before its load data
+  output logic        late_stall_o,               // the instruction in ID waits for that branch to resolve
   input  logic [1:0]  ctrl_transfer_insn_in_id_i,               // jump is being calculated in ALU
   input  logic [1:0]  ctrl_transfer_insn_in_dec_i,              // jump is being calculated in ALU
 
@@ -497,7 +501,12 @@ module cv32e40p_controller import cv32e40p_pkg::*;
             is_decoding_o = 1'b1;
             illegal_insn_n = 1'b0;
 
-            if ( (debug_req_pending || trigger_match_i) & ~debug_mode_q )
+            if (late_stall_o)
+              begin
+                // The instruction stalls in ID: nothing is decided for it until the branch on
+                // load data in EX resolves
+              end
+            else if ( (debug_req_pending || trigger_match_i) & ~debug_mode_q )
               begin
                 //Serving the debug
                 is_decoding_o     = COREV_PULP ? 1'b0 : 1'b1;
@@ -1368,6 +1377,13 @@ endgenerate
     load_stall_o   = 1'b0;
     deassert_we_o  = 1'b0;
 
+    // An equality branch whose only hazard is the load in EX enters EX and takes the load data
+    // there (its WB data must not be pending)
+    branch_late_o  = branch_late_ok_i && is_decoding_o && (ctrl_fsm_cs == DECODE) &&
+                     !debug_single_step_i && !is_hwlp_body &&
+                     data_req_ex_i && regfile_we_ex_i && !(!wb_ready_i && regfile_we_wb_i) &&
+                     (reg_d_ex_is_reg_a_i || reg_d_ex_is_reg_b_i) && !reg_d_ex_is_reg_c_i;
+
     // deassert WE when the core is not decoding instructions
     if (~is_decoding_o)
       deassert_we_o = 1'b1;
@@ -1382,7 +1398,8 @@ endgenerate
            (wb_ready_i == 1'b0) && (regfile_we_wb_i == 1'b1)
           ) &&
           ( (reg_d_ex_is_reg_a_i == 1'b1) || (reg_d_ex_is_reg_b_i == 1'b1) || (reg_d_ex_is_reg_c_i == 1'b1) ||
-            (is_decoding_o && (regfile_we_id_i && !data_misaligned_i) && (regfile_waddr_ex_i == regfile_alu_waddr_id_i)) )
+            (is_decoding_o && (regfile_we_id_i && !data_misaligned_i) && (regfile_waddr_ex_i == regfile_alu_waddr_id_i)) ) &&
+          !branch_late_o
        )
     begin
       deassert_we_o   = 1'b1;
@@ -1410,6 +1427,18 @@ endgenerate
     end
   end
 
+
+  // A branch on load data redirects one cycle after it leaves EX: until then the instruction in
+  // ID may enter EX (it becomes a bubble on a redirect), unless it would act in ID (jump, trap,
+  // interrupt, debug, hardware loop)
+  assign late_stall_o = branch_late_ex_i && instr_valid_i &&
+                        (irq_req_ctrl_i || debug_req_pending || trigger_match_i || debug_single_step_i ||
+                         illegal_insn_i || ebrk_insn_i || ecall_insn_i || wfi_active || fencei_insn_i ||
+                         mret_insn_i || uret_insn_i || dret_insn_i || csr_status_i || data_load_event_i ||
+                         (ctrl_transfer_insn_in_dec_i == BRANCH_JAL) ||
+                         (ctrl_transfer_insn_in_dec_i == BRANCH_JALR) ||
+                         ((ctrl_transfer_insn_in_dec_i == BRANCH_COND) && branch_pred_i) ||
+                         branch_btb_bad_i || is_hwlp_body || hwlp_end0_eq_pc || hwlp_end1_eq_pc);
 
   // stall because of misaligned data access
   assign misaligned_stall_o = data_misaligned_i;
