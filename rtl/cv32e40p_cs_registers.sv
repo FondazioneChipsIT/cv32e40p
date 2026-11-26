@@ -618,7 +618,8 @@ module cv32e40p_cs_registers
       mstatus_n               = mstatus_q;
       mcause_n                = mcause_q;
       ucause_n                = ucause_q;
-      exception_pc            = pc_id_i;
+      // Zero unless a trap or debug entry saves a PC: pc_id does not toggle the epc muxes
+      exception_pc            = '0;
       priv_lvl_n              = priv_lvl_q;
       mtvec_n                 = csr_mtvec_init_i ? mtvec_addr_i[31:8] : mtvec_q;
       utvec_n                 = utvec_q;
@@ -783,7 +784,7 @@ module cv32e40p_cs_registers
             csr_save_if_i: exception_pc = pc_if_i;
             csr_save_id_i: exception_pc = pc_id_i;
             csr_save_ex_i: exception_pc = pc_ex_i;
-            default: ;
+            default:       exception_pc = pc_id_i;
           endcase
 
           unique case (priv_lvl_q)
@@ -903,7 +904,8 @@ module cv32e40p_cs_registers
       mstatus_n = mstatus_q;
       mcause_n = mcause_q;
       ucause_n = '0;  // Not used if PULP_SECURE == 0
-      exception_pc = pc_id_i;
+      // Zero unless a trap or debug entry saves a PC: pc_id does not toggle the epc muxes
+      exception_pc = '0;
       priv_lvl_n = priv_lvl_q;
       mtvec_n = csr_mtvec_init_i ? mtvec_addr_i[31:8] : mtvec_q;
       utvec_n = '0;  // Not used if PULP_SECURE == 0
@@ -1045,7 +1047,7 @@ module cv32e40p_cs_registers
             csr_save_if_i: exception_pc = pc_if_i;
             csr_save_id_i: exception_pc = pc_id_i;
             csr_save_ex_i: exception_pc = pc_ex_i;
-            default: ;
+            default:       exception_pc = pc_id_i;
           endcase
 
           if (debug_csr_save_i) begin
