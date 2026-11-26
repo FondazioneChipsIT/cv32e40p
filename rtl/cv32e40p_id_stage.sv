@@ -1477,13 +1477,27 @@ module cv32e40p_id_stage
       // hwloop register id
       assign hwlp_regid = instr[7];  // rd contains hwloop register id
 
+      logic        hwlp_setup;  // the instruction in ID is a hardware loop setup
+      logic [31:0] hwlp_pc;  // setup operands, zero for the other instructions
+      logic [31:0] hwlp_imm_iz;
+      logic [29:0] hwlp_imm_z;
+      logic [31:0] hwlp_op_a;
+
+      // Only hardware loop setups (custom-1, funct3 100) write these registers: for the other
+      // instructions the operands of the setup adders and muxes stay at zero
+      assign hwlp_setup  = (instr[6:0] == OPCODE_CUSTOM_1) && (instr[14:12] == 3'b100);
+      assign hwlp_pc     = hwlp_setup ? pc_id_i : '0;
+      assign hwlp_imm_iz = hwlp_setup ? imm_iz_type : '0;
+      assign hwlp_imm_z  = hwlp_setup ? imm_z_type[29:0] : '0;
+      assign hwlp_op_a   = hwlp_setup ? operand_a_fw_id : '0;
+
       // hwloop target mux
       always_comb begin
         case (hwlp_target_mux_sel)
-          2'b00:   hwlp_end = pc_id_i + {imm_iz_type[29:0], 2'b0};
-          2'b01:   hwlp_end = pc_id_i + {imm_z_type[29:0], 2'b0};
-          2'b10:   hwlp_end = operand_a_fw_id;
-          default: hwlp_end = operand_a_fw_id;
+          2'b00:   hwlp_end = hwlp_pc + {hwlp_imm_iz[29:0], 2'b0};
+          2'b01:   hwlp_end = hwlp_pc + {hwlp_imm_z, 2'b0};
+          2'b10:   hwlp_end = hwlp_op_a;
+          default: hwlp_end = hwlp_op_a;
         endcase
       end
 
@@ -1491,17 +1505,17 @@ module cv32e40p_id_stage
       always_comb begin
         case (hwlp_start_mux_sel)
           2'b00:   hwlp_start = hwlp_end;  // for PC + I imm
-          2'b01:   hwlp_start = pc_id_i + 4;  // for next PC
-          2'b10:   hwlp_start = operand_a_fw_id;
-          default: hwlp_start = operand_a_fw_id;
+          2'b01:   hwlp_start = hwlp_pc + 4;  // for next PC
+          2'b10:   hwlp_start = hwlp_op_a;
+          default: hwlp_start = hwlp_op_a;
         endcase
       end
 
       // hwloop cnt mux
       always_comb begin : hwlp_cnt_mux
         case (hwlp_cnt_mux_sel)
-          1'b0: hwlp_cnt = imm_iz_type;
-          1'b1: hwlp_cnt = operand_a_fw_id;
+          1'b0: hwlp_cnt = hwlp_imm_iz;
+          1'b1: hwlp_cnt = hwlp_op_a;
         endcase
         ;
       end
