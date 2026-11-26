@@ -1016,10 +1016,12 @@ module cv32e40p_id_stage
   // APU request from ID: sent when the instruction leaves ID, but for the stall of the dispatcher itself
   // (load_stall and jr_stall clear apu_en through deassert_we)
   assign apu_req_id_o      = apu_en & ~halt_id & ~misaligned_stall & ~apu_stall & ~csr_apu_stall & ex_ready_i;
-  assign apu_op_id_o       = apu_op;
   assign apu_lat_id_o      = apu_lat;
-  assign apu_operands_id_o = apu_operands;
-  assign apu_flags_id_o    = apu_flags;
+  // The FPU samples its inputs only with apu_req: they stay at zero for the other
+  // instructions, so the operands of ALU and LSU instructions do not toggle its input logic
+  assign apu_op_id_o       = apu_en ? apu_op : '0;
+  assign apu_operands_id_o = apu_en ? apu_operands : '0;
+  assign apu_flags_id_o    = apu_en ? apu_flags : '0;
   assign apu_waddr_id_o    = apu_waddr;
 
   /////////////////////////////////////////////////////////
