@@ -154,6 +154,7 @@ module cv32e40p_if_stage #(
   logic [BTB_ADDR_WIDTH-1:0] btb_waddr;
   logic                      btb_we;
   logic                      btb_hit;
+  logic                      btb_pred;  // the entry at pc_if predicts a taken jump
   logic [              11:0] btb_imm;
   logic [              31:0] pred_target;
   logic                      pred_jump;  // fetch the BTB target after the instruction at pc_if
@@ -281,16 +282,19 @@ module cv32e40p_if_stage #(
   assign btb_hit = btb_valid_q[btb_raddr] &&
       (btb_tag_q[btb_raddr] == pc_if_o[BTB_ADDR_WIDTH+1+:BTB_TAG_WIDTH]);
   assign btb_imm = 12'($signed(btb_imm_q[btb_raddr]));
-  assign pred_target = pc_if_o + {{19{btb_imm[11]}}, btb_imm, 1'b0};
+  assign btb_pred = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i);
+
+  // The target adder is used only by a predicted jump: its inputs stay at zero for the
+  // other instructions instead of following pc_if
+  assign pred_target = (btb_pred ? pc_if_o : 32'd0) +
+                       (btb_pred ? {{19{btb_imm[11]}}, btb_imm, 1'b0} : 32'd0);
 
   // A pc_set in the same cycle wins in the prefetcher and in the aligner
-  assign pred_jump = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i) && pred_en_i &&
-                     pred_ok_align && pred_ok_fetch;
+  assign pred_jump = btb_pred && pred_en_i && pred_ok_align && pred_ok_fetch;
 
   // A 16-bit instruction held whole in the aligner needs no further word: its target is
   // fetched at once, all sequential words are dropped, and it leaves IF without a fetched word
-  assign pred_flush = btb_hit && (btb_jal_q[btb_raddr] || bht_taken_if_i) && pred_en_i &&
-                      pred_ok_held && pred_ok_fetch;
+  assign pred_flush = btb_pred && pred_en_i && pred_ok_held && pred_ok_fetch;
 
   // The entry read by a pending redirect does not change until its instruction is in ID
   assign btb_waddr = pc_id_o[BTB_ADDR_WIDTH:1];
