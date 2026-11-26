@@ -200,7 +200,8 @@ module cv32e40p_alu_div #(
       RemSel_SP  <= 1'b0;
       CompInv_SP <= 1'b0;
       ResInv_SP  <= 1'b0;
-    end else begin
+    end else if ((State_SP != IDLE) || InVld_SI) begin
+      // In IDLE without a new division every register holds (Cnt_DP is zero)
       State_SP   <= State_SN;
       AReg_DP    <= AReg_DN;
       BReg_DP    <= BReg_DN;
