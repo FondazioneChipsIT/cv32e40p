@@ -476,6 +476,8 @@ module cv32e40p_id_stage
   logic [31:0] alu_operand_b;
   logic [31:0] alu_operand_c;
   logic        alu_op_c_used;  // EX reads operand c of the instruction in ID
+  logic [ 1:0] alu_clpx_shift_id;  // complex shift, zero for the other instructions
+  logic        alu_misc_change;  // a rarely changing ALU field of ID/EX gets a new value
 
   // Immediates for ID
   logic [ 0:0] bmask_a_mux;
@@ -809,6 +811,15 @@ module cv32e40p_id_stage
   assign alu_op_c_used = (alu_op_c_mux_sel != OP_C_REGC_OR_FWD) || data_we_id ||
       (alu_operator inside {ALU_SHUF, ALU_SHUF2, ALU_PCKLO, ALU_PCKHI, ALU_EXT, ALU_EXTS, ALU_INS,
                             ALU_BINS});
+
+  // Bit masks, vector mode and complex fields change only around bit-manipulation, vector and
+  // complex instructions: one load enable for all of them, when one of them changes (the ALU reads
+  // the complex shift only for a complex instruction)
+  assign alu_clpx_shift_id = is_clpx ? instr[14:13] : 2'b00;
+  assign alu_misc_change = {bmask_a_id, bmask_b_id, imm_vec_ext_id, alu_vec_mode, is_clpx,
+                            alu_clpx_shift_id, is_subrot} !=
+                           {bmask_a_ex_o, bmask_b_ex_o, imm_vec_ext_ex_o, alu_vec_mode_ex_o,
+                            alu_is_clpx_ex_o, alu_clpx_shift_ex_o, alu_is_subrot_ex_o};
 
   // scalar replication for operand C and shuffle type
   always_comb begin
@@ -1656,13 +1667,15 @@ module cv32e40p_id_stage
           if (alu_op_c_used) begin
             alu_operand_c_ex_o <= alu_operand_c;
           end
-          bmask_a_ex_o        <= bmask_a_id;
-          bmask_b_ex_o        <= bmask_b_id;
-          imm_vec_ext_ex_o    <= imm_vec_ext_id;
-          alu_vec_mode_ex_o   <= alu_vec_mode;
-          alu_is_clpx_ex_o    <= is_clpx;
-          alu_clpx_shift_ex_o <= instr[14:13];
-          alu_is_subrot_ex_o  <= is_subrot;
+          if (alu_misc_change) begin
+            bmask_a_ex_o        <= bmask_a_id;
+            bmask_b_ex_o        <= bmask_b_id;
+            imm_vec_ext_ex_o    <= imm_vec_ext_id;
+            alu_vec_mode_ex_o   <= alu_vec_mode;
+            alu_is_clpx_ex_o    <= is_clpx;
+            alu_clpx_shift_ex_o <= alu_clpx_shift_id;
+            alu_is_subrot_ex_o  <= is_subrot;
+          end
         end
 
         mult_en_ex_o <= mult_en;
