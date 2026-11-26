@@ -61,7 +61,10 @@ module cv32e40p_int_controller
       irq_q     <= '0;
       irq_sec_q <= 1'b0;
     end else begin
-      irq_q     <= irq_i & IRQ_MASK;
+      // Loaded only when an input changes: the interrupt lines stay still for long stretches
+      if ((irq_i & IRQ_MASK) != irq_q) begin
+        irq_q <= irq_i & IRQ_MASK;
+      end
       irq_sec_q <= irq_sec_i;
     end
   end

@@ -124,7 +124,8 @@ module cv32e40p_register_file #(
 
       if (we_b_i) wdata_b_q <= wdata_b_i;
 
-      waddr_onehot_b_q <= waddr_onehot_b;
+      // Zero between port b writes: loaded only to set it or to clear it
+      if (we_b_i || (waddr_onehot_b_q != '0)) waddr_onehot_b_q <= waddr_onehot_b;
     end
   end
 
