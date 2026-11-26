@@ -365,7 +365,9 @@ module cv32e40p_id_stage
   logic [ 5:0] regfile_addr_ra_id;
   logic [ 5:0] regfile_addr_rb_id;
   logic [ 5:0] regfile_addr_rc_id;
+  logic [ 5:0] regfile_raddr_ra_id;  // read address of port a
   logic [ 5:0] regfile_raddr_rb_id;  // read address of port b
+  logic        rs1_field_imm;
   logic        rs2_field_imm;
 
   logic        regfile_fp_a;
@@ -551,6 +553,11 @@ module cv32e40p_id_stage
   //---------------------------------------------------------------------------
   assign regfile_addr_ra_id = {regfile_fp_a, instr[REG_S1_MSB:REG_S1_LSB]};
   assign regfile_addr_rb_id = {regfile_fp_b, instr[REG_S2_MSB:REG_S2_LSB]};
+
+  // These opcodes hold immediate bits in the rs1 field: port a reads x0 instead of following them
+  assign rs1_field_imm = (instr[6:0] == OPCODE_LUI) || (instr[6:0] == OPCODE_AUIPC) ||
+                         (instr[6:0] == OPCODE_JAL);
+  assign regfile_raddr_ra_id = rs1_field_imm ? '0 : regfile_addr_ra_id;
 
   // These opcodes hold immediate bits in the rs2 field: port b reads x0 instead of following them
   assign rs2_field_imm = (instr[6:0] == OPCODE_OPIMM) || (instr[6:0] == OPCODE_LOAD) ||
@@ -1045,7 +1052,7 @@ module cv32e40p_id_stage
       .scan_cg_en_i(scan_cg_en_i),
 
       // Read port a
-      .raddr_a_i(regfile_addr_ra_id),
+      .raddr_a_i(regfile_raddr_ra_id),
       .rdata_a_o(regfile_data_ra_id),
 
       // Read port b
